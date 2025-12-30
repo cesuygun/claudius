@@ -28,8 +28,8 @@ class TestHealthEndpoint:
 class TestMessagesEndpointValidation:
     """Tests for request validation on /v1/messages."""
 
-    def test_missing_authorization_returns_401(self) -> None:
-        """Test that missing Authorization header returns 401."""
+    def test_missing_api_key_returns_401(self) -> None:
+        """Test that missing API key returns 401."""
         app = create_app()
         client = TestClient(app)
 
@@ -39,7 +39,7 @@ class TestMessagesEndpointValidation:
         )
 
         assert response.status_code == 401
-        assert "Authorization" in response.json()["detail"]
+        assert "No API key found" in response.json()["detail"]
 
     def test_missing_x_api_key_also_accepted(self) -> None:
         """Test that x-api-key header is accepted as alternative to Authorization."""
@@ -62,6 +62,200 @@ class TestMessagesEndpointValidation:
             )
 
             assert response.status_code == 200
+
+
+class TestApiKeyFallback:
+    """Tests for API key fallback resolution."""
+
+    def test_x_api_key_header_takes_priority(self) -> None:
+        """Test that x-api-key header is used first."""
+        from claudius.config import ApiConfig
+        from claudius.proxy import set_api_config
+
+        app = create_app()
+        client = TestClient(app)
+
+        # Set a config key that should NOT be used
+        set_api_config(ApiConfig(key="config-key-should-not-be-used"))
+
+        with patch("claudius.proxy.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "application/json"}
+            mock_response.content = b'{"id": "msg_123"}'
+            mock_client.post.return_value = mock_response
+
+            client.post(
+                "/v1/messages",
+                json={"model": "claude-3-5-haiku-20241022", "messages": []},
+                headers={"x-api-key": "sk-ant-header-key"},
+            )
+
+            call_args = mock_client.post.call_args
+            forwarded_headers = call_args[1]["headers"]
+            assert forwarded_headers["x-api-key"] == "sk-ant-header-key"
+
+        # Clean up
+        set_api_config(ApiConfig())
+
+    def test_authorization_bearer_header_used_when_no_x_api_key(self) -> None:
+        """Test that Authorization Bearer header is used when no x-api-key."""
+        app = create_app()
+        client = TestClient(app)
+
+        with patch("claudius.proxy.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "application/json"}
+            mock_response.content = b'{"id": "msg_123"}'
+            mock_client.post.return_value = mock_response
+
+            client.post(
+                "/v1/messages",
+                json={"model": "claude-3-5-haiku-20241022", "messages": []},
+                headers={"Authorization": "Bearer sk-ant-bearer-key"},
+            )
+
+            call_args = mock_client.post.call_args
+            forwarded_headers = call_args[1]["headers"]
+            assert forwarded_headers["x-api-key"] == "sk-ant-bearer-key"
+
+    def test_config_key_used_when_no_headers(self) -> None:
+        """Test that config file key is used when no headers provided."""
+        from claudius.config import ApiConfig
+        from claudius.proxy import set_api_config
+
+        app = create_app()
+        client = TestClient(app)
+
+        # Set a config key
+        set_api_config(ApiConfig(key="sk-ant-config-key"))
+
+        with patch("claudius.proxy.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "application/json"}
+            mock_response.content = b'{"id": "msg_123"}'
+            mock_client.post.return_value = mock_response
+
+            response = client.post(
+                "/v1/messages",
+                json={"model": "claude-3-5-haiku-20241022", "messages": []},
+            )
+
+            assert response.status_code == 200
+            call_args = mock_client.post.call_args
+            forwarded_headers = call_args[1]["headers"]
+            assert forwarded_headers["x-api-key"] == "sk-ant-config-key"
+
+        # Clean up
+        set_api_config(ApiConfig())
+
+    def test_env_var_used_when_no_headers_or_config(self) -> None:
+        """Test that ANTHROPIC_API_KEY env var is used as last fallback."""
+        from claudius.config import ApiConfig
+        from claudius.proxy import set_api_config
+
+        app = create_app()
+        client = TestClient(app)
+
+        # Ensure config key is empty
+        set_api_config(ApiConfig(key=""))
+
+        with patch("claudius.proxy.httpx.AsyncClient") as mock_client_class:
+            with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-env-key"}):
+                mock_client = AsyncMock()
+                mock_client_class.return_value.__aenter__.return_value = mock_client
+                mock_response = MagicMock()
+                mock_response.status_code = 200
+                mock_response.headers = {"content-type": "application/json"}
+                mock_response.content = b'{"id": "msg_123"}'
+                mock_client.post.return_value = mock_response
+
+                response = client.post(
+                    "/v1/messages",
+                    json={"model": "claude-3-5-haiku-20241022", "messages": []},
+                )
+
+                assert response.status_code == 200
+                call_args = mock_client.post.call_args
+                forwarded_headers = call_args[1]["headers"]
+                assert forwarded_headers["x-api-key"] == "sk-ant-env-key"
+
+    def test_returns_401_when_no_key_found_anywhere(self) -> None:
+        """Test that 401 is returned when no API key found in any source."""
+        from claudius.config import ApiConfig
+        from claudius.proxy import set_api_config
+
+        app = create_app()
+        client = TestClient(app)
+
+        # Ensure config key is empty
+        set_api_config(ApiConfig(key=""))
+
+        # Ensure env var is not set
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}, clear=False):
+            # Also need to ensure the env var doesn't exist at all
+            import os
+
+            env_backup = os.environ.pop("ANTHROPIC_API_KEY", None)
+
+            try:
+                response = client.post(
+                    "/v1/messages",
+                    json={"model": "claude-3-5-haiku-20241022", "messages": []},
+                )
+
+                assert response.status_code == 401
+                assert "No API key found" in response.json()["detail"]
+            finally:
+                if env_backup is not None:
+                    os.environ["ANTHROPIC_API_KEY"] = env_backup
+
+    def test_estimate_endpoint_uses_fallback_chain(self) -> None:
+        """Test that /v1/estimate endpoint also uses the API key fallback chain."""
+        from claudius.config import ApiConfig
+        from claudius.proxy import set_api_config
+
+        app = create_app()
+        client = TestClient(app)
+
+        # Set a config key
+        set_api_config(ApiConfig(key="sk-ant-config-key"))
+
+        with patch("claudius.proxy.estimate_cost") as mock_estimate:
+            from claudius.estimation import EstimationResult
+
+            mock_estimate.return_value = EstimationResult(
+                input_tokens=100,
+                output_tokens_min=50,
+                output_tokens_max=200,
+                cost_min=0.001,
+                cost_max=0.005,
+                model="claude-3-5-haiku-20241022",
+            )
+
+            response = client.post(
+                "/v1/estimate",
+                json={
+                    "model": "claude-3-5-haiku-20241022",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                },
+            )
+
+            assert response.status_code == 200
+            mock_estimate.assert_called_once()
+            call_kwargs = mock_estimate.call_args[1]
+            assert call_kwargs["api_key"] == "sk-ant-config-key"
+
+        # Clean up
+        set_api_config(ApiConfig())
 
 
 class TestMessagesEndpointForwarding:
@@ -503,7 +697,7 @@ class TestStreamingErrorHandling:
 class TestEstimateEndpoint:
     """Tests for the /v1/estimate cost estimation endpoint."""
 
-    def test_estimate_requires_authorization(self) -> None:
+    def test_estimate_requires_api_key(self) -> None:
         """Test that POST /v1/estimate requires authentication."""
         app = create_app()
         client = TestClient(app)
@@ -517,7 +711,7 @@ class TestEstimateEndpoint:
         )
 
         assert response.status_code == 401
-        assert "Authorization" in response.json()["detail"]
+        assert "No API key found" in response.json()["detail"]
 
     def test_estimate_returns_estimation_result(self) -> None:
         """Test that estimate endpoint returns cost estimation."""

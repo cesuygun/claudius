@@ -17,6 +17,9 @@ import toml
 DEFAULT_CONFIG_PATH = Path.home() / ".claudius" / "config.toml"
 
 DEFAULT_CONFIG = """
+[api]
+key = ""  # Your Anthropic API key (optional - can also use ANTHROPIC_API_KEY env var)
+
 [budget]
 monthly = 90
 daily_soft = 5
@@ -54,6 +57,13 @@ haiku = "claude-3-5-haiku-20241022"
 sonnet = "claude-sonnet-4-20250514"
 opus = "claude-opus-4-20250514"
 """
+
+
+@dataclass
+class ApiConfig:
+    """API configuration."""
+
+    key: str = ""  # Optional - can be empty
 
 
 @dataclass
@@ -98,6 +108,7 @@ class RateLimitConfig:
 class Config:
     """Main configuration container."""
 
+    api: ApiConfig = field(default_factory=ApiConfig)
     budget: BudgetConfig = field(default_factory=BudgetConfig)
     routing: RoutingConfig = field(default_factory=RoutingConfig)
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
@@ -124,6 +135,7 @@ class Config:
     def _from_dict(cls, data: dict[str, Any]) -> "Config":
         """Create Config from dictionary."""
         return cls(
+            api=ApiConfig(**data.get("api", {})),
             budget=BudgetConfig(**data.get("budget", {})),
             routing=RoutingConfig(**data.get("routing", {})),
             proxy=ProxyConfig(**data.get("proxy", {})),

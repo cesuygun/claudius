@@ -11,6 +11,7 @@ Handles both regular and streaming (SSE) responses with cost tracking.
 import asyncio
 import json
 import logging
+import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -19,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from claudius.budget import BudgetTracker
-from claudius.config import RateLimitConfig
+from claudius.config import ApiConfig, RateLimitConfig
 from claudius.estimation import estimate_cost
 from claudius.pricing import calculate_cost
 
@@ -27,6 +28,9 @@ ANTHROPIC_API_URL = "https://api.anthropic.com"
 
 # Default rate limit config (can be overridden via set_rate_limit_config)
 _rate_limit_config = RateLimitConfig()
+
+# API config (optional, set via set_api_config)
+_api_config = ApiConfig()
 
 # Budget tracker (optional, set via set_budget_tracker)
 _budget_tracker: BudgetTracker | None = None
@@ -47,6 +51,21 @@ def get_rate_limit_config() -> RateLimitConfig:
     return _rate_limit_config
 
 
+def set_api_config(config: ApiConfig) -> None:
+    """Set the API configuration for the proxy.
+
+    This allows external code to configure API settings
+    (e.g., from a config file) before or after creating the app.
+    """
+    global _api_config
+    _api_config = config
+
+
+def get_api_config() -> ApiConfig:
+    """Get the current API configuration."""
+    return _api_config
+
+
 def set_budget_tracker(tracker: BudgetTracker | None) -> None:
     """Set the budget tracker for cost recording.
 
@@ -60,6 +79,42 @@ def set_budget_tracker(tracker: BudgetTracker | None) -> None:
 def get_budget_tracker() -> BudgetTracker | None:
     """Get the current budget tracker."""
     return _budget_tracker
+
+
+def _resolve_api_key(request: Request) -> str | None:
+    """Resolve API key from request headers, config, or environment.
+
+    Resolution order:
+    1. x-api-key header
+    2. Authorization header (Bearer token or raw key)
+    3. Config file key (api.key from config.toml)
+    4. ANTHROPIC_API_KEY environment variable
+
+    Returns:
+        The resolved API key, or None if no key found.
+    """
+    # Check x-api-key header
+    api_key = request.headers.get("x-api-key")
+    if api_key:
+        return api_key
+
+    # Check Authorization header
+    auth_header = request.headers.get("authorization")
+    if auth_header:
+        if auth_header.lower().startswith("bearer "):
+            return auth_header[7:]
+        return auth_header
+
+    # Check config file
+    if _api_config.key:
+        return _api_config.key
+
+    # Check environment variable
+    env_key = os.environ.get("ANTHROPIC_API_KEY")
+    if env_key:
+        return env_key
+
+    return None
 
 
 # Headers to filter out when forwarding requests
@@ -100,23 +155,23 @@ def create_app() -> FastAPI:
         """Proxy requests to the Anthropic messages API."""
         logger.info("Request received: POST /v1/messages")
 
-        # Check for authentication
-        auth_header = request.headers.get("authorization")
-        api_key_header = request.headers.get("x-api-key")
-
-        if not auth_header and not api_key_header:
-            logger.error("Missing Authorization or x-api-key header")
+        # Resolve API key from headers, config, or environment
+        api_key = _resolve_api_key(request)
+        if not api_key:
+            logger.error("No API key found in headers, config, or environment")
             raise HTTPException(
                 status_code=401,
-                detail="Missing Authorization or x-api-key header",
+                detail="No API key found. Provide x-api-key header, "
+                "Authorization header, api.key in config, or ANTHROPIC_API_KEY env var",
             )
 
         # Get request body
         body = await request.body()
         body_json = json.loads(body)
 
-        # Filter and forward headers
+        # Filter and forward headers, then ensure API key is set
         forwarded_headers = _filter_request_headers(request.headers)
+        forwarded_headers["x-api-key"] = api_key
 
         # Check if this is a streaming request
         is_streaming = body_json.get("stream", False)
@@ -138,25 +193,15 @@ def create_app() -> FastAPI:
         """
         logger.info("Request received: POST /v1/estimate")
 
-        # Check for authentication
-        auth_header = request.headers.get("authorization")
-        api_key_header = request.headers.get("x-api-key")
-
-        if not auth_header and not api_key_header:
-            logger.error("Missing Authorization or x-api-key header")
+        # Resolve API key from headers, config, or environment
+        api_key = _resolve_api_key(request)
+        if not api_key:
+            logger.error("No API key found in headers, config, or environment")
             raise HTTPException(
                 status_code=401,
-                detail="Missing Authorization or x-api-key header",
+                detail="No API key found. Provide x-api-key header, "
+                "Authorization header, api.key in config, or ANTHROPIC_API_KEY env var",
             )
-
-        # Extract API key from headers
-        api_key = api_key_header
-        if not api_key and auth_header:
-            # Extract from "Bearer <key>" format
-            if auth_header.lower().startswith("bearer "):
-                api_key = auth_header[7:]
-            else:
-                api_key = auth_header
 
         # Get request body
         body = await request.body()
@@ -488,4 +533,5 @@ if __name__ == "__main__":
 
     config = Config.load()
     set_rate_limit_config(config.rate_limit)
+    set_api_config(config.api)
     run_server(host=config.proxy.host, port=config.proxy.port)
