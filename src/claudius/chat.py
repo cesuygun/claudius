@@ -95,6 +95,8 @@ class ChatClient:
         input_tokens = 0
         output_tokens = 0
         model_used = "sonnet"
+        # Buffer to accumulate incomplete SSE data across chunks
+        sse_buffer = ""
 
         client = httpx.AsyncClient()
         try:
@@ -113,38 +115,54 @@ class ChatClient:
                         )
 
                     async for chunk in response.aiter_bytes():
-                        # Parse SSE chunks
-                        for line in chunk.decode("utf-8").split("\n"):
-                            if line.startswith("data: "):
-                                try:
-                                    data = json.loads(line[6:])
-                                    event_type = data.get("type", "")
+                        # Add chunk to buffer and process complete SSE events
+                        sse_buffer += chunk.decode("utf-8", errors="replace")
 
-                                    if event_type == "message_start":
-                                        msg = data.get("message", {})
-                                        usage = msg.get("usage", {})
-                                        input_tokens = usage.get("input_tokens", 0)
-                                        model_full = msg.get("model", "")
-                                        # Extract model name (haiku, sonnet, opus)
-                                        if "haiku" in model_full:
-                                            model_used = "haiku"
-                                        elif "opus" in model_full:
-                                            model_used = "opus"
-                                        else:
-                                            model_used = "sonnet"
+                        # Process complete events (delimited by double newline)
+                        while "\n\n" in sse_buffer:
+                            event_end = sse_buffer.index("\n\n")
+                            event_data = sse_buffer[:event_end]
+                            sse_buffer = sse_buffer[event_end + 2:]
 
-                                    elif event_type == "content_block_delta":
-                                        delta = data.get("delta", {})
-                                        if delta.get("type") == "text_delta":
-                                            text = delta.get("text", "")
-                                            accumulated_text += text
+                            # Extract the data line from the event
+                            data_line = None
+                            for line in event_data.split("\n"):
+                                if line.startswith("data: "):
+                                    data_line = line[6:]
+                                    break
 
-                                    elif event_type == "message_delta":
-                                        usage = data.get("usage", {})
-                                        output_tokens = usage.get("output_tokens", 0)
+                            if not data_line:
+                                continue
 
-                                except json.JSONDecodeError:
-                                    pass
+                            try:
+                                data = json.loads(data_line)
+                                event_type = data.get("type", "")
+
+                                if event_type == "message_start":
+                                    msg = data.get("message", {})
+                                    usage = msg.get("usage", {})
+                                    input_tokens = usage.get("input_tokens", 0)
+                                    model_full = msg.get("model", "")
+                                    # Extract model name (haiku, sonnet, opus)
+                                    if "haiku" in model_full:
+                                        model_used = "haiku"
+                                    elif "opus" in model_full:
+                                        model_used = "opus"
+                                    else:
+                                        model_used = "sonnet"
+
+                                elif event_type == "content_block_delta":
+                                    delta = data.get("delta", {})
+                                    if delta.get("type") == "text_delta":
+                                        text = delta.get("text", "")
+                                        accumulated_text += text
+
+                                elif event_type == "message_delta":
+                                    usage = data.get("usage", {})
+                                    output_tokens = usage.get("output_tokens", 0)
+
+                            except json.JSONDecodeError:
+                                pass
 
             except httpx.ConnectError as e:
                 raise ChatError(f"Connection error: {e}") from e

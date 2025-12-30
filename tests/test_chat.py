@@ -799,3 +799,138 @@ class TestErrorHandling:
 
             # Conversation should remain unchanged after error
             assert client.conversation == original_conversation
+
+
+class TestSSEChunkBuffering:
+    """Tests for SSE chunk buffering to handle split events."""
+
+    async def test_handles_split_message_start_event(self) -> None:
+        """Test that message_start event split across chunks is handled correctly."""
+        client = ChatClient(api_key="sk-ant-test123")
+
+        async def split_chunks():
+            # First chunk contains partial message_start data
+            yield b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_'
+            # Second chunk continues the data
+            yield b'123","model":"claude-sonnet-4-20250514","usage":{"input_tokens":150}}}\n\n'
+            # Complete events
+            yield b'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}\n\n'
+            yield b'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":75}}\n\n'
+            yield b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+
+        with patch("claudius.chat.httpx.AsyncClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.aclose = AsyncMock()
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "text/event-stream"}
+            mock_response.aiter_bytes = split_chunks
+
+            mock_stream_cm = MagicMock()
+            mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_stream_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_client.stream.return_value = mock_stream_cm
+
+            response = await client.send_message("Hello")
+
+            # Input tokens should be correctly extracted even with split chunks
+            assert response.input_tokens == 150
+            assert response.output_tokens == 75
+            assert response.cost > 0
+
+    async def test_handles_split_message_delta_event(self) -> None:
+        """Test that message_delta event split across chunks is handled correctly."""
+        client = ChatClient(api_key="sk-ant-test123")
+
+        async def split_chunks():
+            yield b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_123","model":"claude-sonnet-4-20250514","usage":{"input_tokens":100}}}\n\n'
+            yield b'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}\n\n'
+            # Split message_delta across chunks
+            yield b'event: message_delta\ndata: {"type":"message_'
+            yield b'delta","usage":{"output_tokens":200}}\n\n'
+            yield b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+
+        with patch("claudius.chat.httpx.AsyncClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.aclose = AsyncMock()
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "text/event-stream"}
+            mock_response.aiter_bytes = split_chunks
+
+            mock_stream_cm = MagicMock()
+            mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_stream_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_client.stream.return_value = mock_stream_cm
+
+            response = await client.send_message("Hello")
+
+            # Output tokens should be correctly extracted even with split chunks
+            assert response.input_tokens == 100
+            assert response.output_tokens == 200
+
+    async def test_handles_multiple_events_in_single_chunk(self) -> None:
+        """Test that multiple complete events in a single chunk are all processed."""
+        client = ChatClient(api_key="sk-ant-test123")
+
+        async def combined_chunks():
+            # All events in a single chunk
+            yield b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_123","model":"claude-sonnet-4-20250514","usage":{"input_tokens":250}}}\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello, world!"}}\n\nevent: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":300}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n'
+
+        with patch("claudius.chat.httpx.AsyncClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.aclose = AsyncMock()
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "text/event-stream"}
+            mock_response.aiter_bytes = combined_chunks
+
+            mock_stream_cm = MagicMock()
+            mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_stream_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_client.stream.return_value = mock_stream_cm
+
+            response = await client.send_message("Hello")
+
+            assert response.input_tokens == 250
+            assert response.output_tokens == 300
+            assert response.text == "Hello, world!"
+
+    async def test_handles_byte_by_byte_streaming(self) -> None:
+        """Test extreme case where each byte arrives as a separate chunk."""
+        client = ChatClient(api_key="sk-ant-test123")
+
+        # Full SSE data
+        full_data = b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_123","model":"claude-sonnet-4-20250514","usage":{"input_tokens":42}}}\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"X"}}\n\nevent: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":24}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n'
+
+        async def byte_by_byte():
+            for byte in full_data:
+                yield bytes([byte])
+
+        with patch("claudius.chat.httpx.AsyncClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.aclose = AsyncMock()
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "text/event-stream"}
+            mock_response.aiter_bytes = byte_by_byte
+
+            mock_stream_cm = MagicMock()
+            mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_stream_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_client.stream.return_value = mock_stream_cm
+
+            response = await client.send_message("Hello")
+
+            # Should correctly parse even with byte-by-byte streaming
+            assert response.input_tokens == 42
+            assert response.output_tokens == 24
+            assert response.text == "X"
