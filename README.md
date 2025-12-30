@@ -35,14 +35,24 @@
 
 ```bash
 # Install
-pipx install claudius
+pip install claudius
+# or: pipx install claudius
 
-# Set your API key
-export ANTHROPIC_API_KEY=sk-...
+# Configure your API key (choose one method):
 
-# Run
+# Option 1: Config file (recommended - persists across sessions)
+mkdir -p ~/.claudius
+echo '[api]
+key = "sk-ant-your-key-here"' >> ~/.claudius/config.toml
+
+# Option 2: Environment variable
+export ANTHROPIC_API_KEY=sk-ant-your-key-here
+
+# Start the proxy
 claudius
 ```
+
+> ⚠️ **Security**: Never commit your API key to git. The config file lives in your home directory (`~/.claudius/`), safely outside any repo.
 
 ## What It Looks Like
 
@@ -122,6 +132,9 @@ claude
 Config file: `~/.claudius/config.toml`
 
 ```toml
+[api]
+key = ""  # Your Anthropic API key (or use ANTHROPIC_API_KEY env var)
+
 [budget]
 monthly = 90
 daily_soft = 5
@@ -134,8 +147,19 @@ default = "haiku"
 auto_classify = true
 
 [proxy]
+host = "127.0.0.1"
 port = 4000
+
+[rate_limit]
+max_retries = 3
+initial_delay = 5
+backoff_multiplier = 3
 ```
+
+**API Key Resolution Order:**
+1. Request headers (`x-api-key` or `Authorization: Bearer`)
+2. Config file (`api.key`)
+3. Environment variable (`ANTHROPIC_API_KEY`)
 
 ## Support Claudius
 
