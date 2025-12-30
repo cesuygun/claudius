@@ -22,8 +22,23 @@ from claudius.config import RateLimitConfig
 
 ANTHROPIC_API_URL = "https://api.anthropic.com"
 
-# Default rate limit config (can be overridden via create_app)
+# Default rate limit config (can be overridden via set_rate_limit_config)
 _rate_limit_config = RateLimitConfig()
+
+
+def set_rate_limit_config(config: RateLimitConfig) -> None:
+    """Set the rate limit configuration for the proxy.
+
+    This allows external code to configure rate limiting behavior
+    (e.g., from a config file) before or after creating the app.
+    """
+    global _rate_limit_config
+    _rate_limit_config = config
+
+
+def get_rate_limit_config() -> RateLimitConfig:
+    """Get the current rate limit configuration."""
+    return _rate_limit_config
 
 # Headers to filter out when forwarding requests
 FILTERED_REQUEST_HEADERS = frozenset({"host", "content-length"})
@@ -287,4 +302,5 @@ if __name__ == "__main__":
     from claudius.config import Config
 
     config = Config.load()
+    set_rate_limit_config(config.rate_limit)
     run_server(host=config.proxy.host, port=config.proxy.port)

@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from claudius.config import RateLimitConfig
-from claudius.proxy import create_app
+from claudius.proxy import (
+    create_app,
+    get_rate_limit_config,
+    set_rate_limit_config,
+)
 
 
 class TestRateLimitConfig:
@@ -33,6 +37,81 @@ class TestRateLimitConfig:
         assert config.max_retries == 5
         assert config.initial_delay == 10
         assert config.backoff_multiplier == 2
+
+
+class TestRateLimitConfigWiring:
+    """Tests for rate limit config wiring from config file to proxy."""
+
+    def test_set_rate_limit_config_updates_global(self) -> None:
+        """Test that set_rate_limit_config updates the module-level config."""
+        # Save original config for cleanup
+        original_config = get_rate_limit_config()
+
+        try:
+            custom_config = RateLimitConfig(
+                max_retries=7,
+                initial_delay=20,
+                backoff_multiplier=4,
+            )
+            set_rate_limit_config(custom_config)
+
+            current_config = get_rate_limit_config()
+            assert current_config.max_retries == 7
+            assert current_config.initial_delay == 20
+            assert current_config.backoff_multiplier == 4
+        finally:
+            # Restore original config
+            set_rate_limit_config(original_config)
+
+    def test_custom_config_used_in_retry_logic(self) -> None:
+        """Test that custom config values are actually used in retry logic."""
+        # Save original config for cleanup
+        original_config = get_rate_limit_config()
+
+        try:
+            # Set custom config with 1 retry and 2s initial delay
+            custom_config = RateLimitConfig(
+                max_retries=1,
+                initial_delay=2,
+                backoff_multiplier=2,
+            )
+            set_rate_limit_config(custom_config)
+
+            app = create_app()
+            client = TestClient(app)
+
+            with patch("claudius.proxy.httpx.AsyncClient") as mock_client_class:
+                mock_client = AsyncMock()
+                mock_client_class.return_value.__aenter__.return_value = mock_client
+
+                # Return 429 for all attempts
+                mock_response_429 = MagicMock()
+                mock_response_429.status_code = 429
+                mock_response_429.headers = {"content-type": "application/json"}
+                mock_response_429.content = b'{"error": {"type": "rate_limit_error"}}'
+
+                mock_client.post.return_value = mock_response_429
+
+                sleep_calls = []
+
+                async def mock_sleep(delay: float) -> None:
+                    sleep_calls.append(delay)
+
+                with patch("claudius.proxy.asyncio.sleep", side_effect=mock_sleep):
+                    response = client.post(
+                        "/v1/messages",
+                        json={"model": "claude-3-5-haiku-20241022", "messages": []},
+                        headers={"Authorization": "Bearer sk-ant-test123"},
+                    )
+
+                assert response.status_code == 429
+                # With max_retries=1: initial attempt + 1 retry = 2 total calls
+                assert mock_client.post.call_count == 2
+                # With initial_delay=2: should sleep for 2 seconds on retry
+                assert sleep_calls == [2]
+        finally:
+            # Restore original config
+            set_rate_limit_config(original_config)
 
 
 class TestRateLimitRetryNonStreaming:
