@@ -3,12 +3,24 @@
 
 """Tests for Claudius budget tracker."""
 
+import sqlite3
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from claudius.budget import BudgetStatus, BudgetTracker
+
+
+@pytest.fixture
+def temp_db() -> Path:
+    """Create a temporary database for testing."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = Path(f.name)
+        # Initialize the tracker to create schema
+        BudgetTracker(db_path=db_path)
+        return db_path
 
 
 class TestBudgetTracker:
@@ -110,3 +122,54 @@ class TestBudgetStatus:
 
         assert status.monthly_bar == "█" * 20
         assert status.daily_bar == "█" * 20
+
+
+class TestRolloverCalculation:
+    """Tests for rollover budget calculation."""
+
+    def test_rollover_from_unused_budget(self, temp_db: Path) -> None:
+        """Rollover should equal unused budget from previous month."""
+        tracker = BudgetTracker(db_path=temp_db)
+
+        # Insert usage from previous month (spent 70 of 90 budget)
+        now = datetime.now()
+        if now.month == 1:
+            prev_month = datetime(now.year - 1, 12, 15)
+        else:
+            prev_month = datetime(now.year, now.month - 1, 15)
+
+        with sqlite3.connect(temp_db) as conn:
+            conn.execute(
+                "INSERT INTO usage (timestamp, model, input_tokens, output_tokens, cost) VALUES (?, ?, ?, ?, ?)",
+                (prev_month.isoformat(), "sonnet", 1000, 500, 70.0),
+            )
+
+        status = tracker.get_status(monthly_budget=90.0, daily_budget=5.0)
+        assert status.rollover == 20.0  # 90 - 70 = 20
+
+    def test_rollover_capped_at_max(self, temp_db: Path) -> None:
+        """Rollover should be capped at 50% of monthly budget."""
+        tracker = BudgetTracker(db_path=temp_db)
+        # No previous spending = full 90 unused, but cap at 45 (50%)
+        status = tracker.get_status(monthly_budget=90.0, daily_budget=5.0)
+        assert status.rollover == 45.0  # Capped at 50% of 90
+
+    def test_no_rollover_if_overspent(self, temp_db: Path) -> None:
+        """No rollover if previous month was overspent."""
+        tracker = BudgetTracker(db_path=temp_db)
+
+        # Insert overspending from previous month
+        now = datetime.now()
+        if now.month == 1:
+            prev_month = datetime(now.year - 1, 12, 15)
+        else:
+            prev_month = datetime(now.year, now.month - 1, 15)
+
+        with sqlite3.connect(temp_db) as conn:
+            conn.execute(
+                "INSERT INTO usage (timestamp, model, input_tokens, output_tokens, cost) VALUES (?, ?, ?, ?, ?)",
+                (prev_month.isoformat(), "opus", 5000, 2000, 100.0),  # Overspent!
+            )
+
+        status = tracker.get_status(monthly_budget=90.0, daily_budget=5.0)
+        assert status.rollover == 0.0

@@ -145,6 +145,35 @@ class BudgetTracker:
             ).fetchone()
             return result[0] if result else 0.0
 
+    def _calculate_rollover(self, monthly_budget: float, max_rollover_percent: float = 0.5) -> float:
+        """Calculate rollover from previous month.
+
+        Args:
+            monthly_budget: The monthly budget amount
+            max_rollover_percent: Max rollover as fraction of monthly (default 50%)
+
+        Returns:
+            Rollover amount (0 if previous month overspent)
+        """
+        now = datetime.now()
+
+        # Get previous month
+        if now.month == 1:
+            prev_year, prev_month = now.year - 1, 12
+        else:
+            prev_year, prev_month = now.year, now.month - 1
+
+        prev_spent = self.get_monthly_spent(prev_year, prev_month)
+        unused = monthly_budget - prev_spent
+
+        # No rollover if overspent
+        if unused <= 0:
+            return 0.0
+
+        # Cap at max rollover
+        max_rollover = monthly_budget * max_rollover_percent
+        return min(unused, max_rollover)
+
     def get_status(self, monthly_budget: float, daily_budget: float) -> BudgetStatus:
         """Get current budget status."""
         now = datetime.now()
@@ -158,6 +187,8 @@ class BudgetTracker:
             next_month = now.replace(month=now.month + 1, day=1)
         days_until_reset = (next_month - now).days
 
+        rollover = self._calculate_rollover(monthly_budget)
+
         return BudgetStatus(
             monthly_budget=monthly_budget,
             monthly_spent=monthly_spent,
@@ -167,6 +198,6 @@ class BudgetTracker:
             daily_spent=daily_spent,
             daily_remaining=daily_budget - daily_spent,
             daily_percent=(daily_spent / daily_budget * 100) if daily_budget > 0 else 0,
-            rollover=0.0,  # TODO: Implement rollover calculation
+            rollover=rollover,
             days_until_reset=days_until_reset,
         )
