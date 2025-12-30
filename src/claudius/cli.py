@@ -92,6 +92,9 @@ def format_status_line(
     Returns:
         Formatted status line string.
     """
+    # Determine currency symbol
+    currency_symbol = "€" if currency == "EUR" else "$"
+
     parts = []
 
     # Session cost (if available, converted from USD to local currency)
@@ -100,15 +103,16 @@ def format_status_line(
         session_cost_usd = cost_data.get("total_cost_usd", 0.0)
         if session_cost_usd > 0:
             session_cost_local = session_cost_usd * usd_to_eur_rate
-            parts.append(f"{session_cost_local:.2f} session")
+            parts.append(f"{currency_symbol}{session_cost_local:.2f} session")
 
     # Daily budget status
-    parts.append(f"{daily_spent:.2f}/{daily_budget:.0f} today")
+    parts.append(f"{currency_symbol}{daily_spent:.2f}/{currency_symbol}{daily_budget:.0f} today")
 
     # Monthly budget status
-    parts.append(f"{monthly_spent:.0f}/{monthly_budget:.0f} month")
+    parts.append(f"{currency_symbol}{monthly_spent:.0f}/{currency_symbol}{monthly_budget:.0f} month")
 
-    return " | ".join(parts)
+    # Add money bag emoji prefix as per DESIGN.md specification
+    return "💰 " + " | ".join(parts)
 
 
 def status_line_command(

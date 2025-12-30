@@ -75,6 +75,10 @@ class TestFormatStatusLine:
             usd_to_eur_rate=0.92,
         )
 
+        # Verify money bag emoji prefix
+        assert result.startswith("💰 ")
+        # Verify currency symbols are present
+        assert "€" in result
         assert "session" in result
         assert "today" in result
         assert "month" in result
@@ -91,6 +95,10 @@ class TestFormatStatusLine:
             usd_to_eur_rate=0.92,
         )
 
+        # Verify money bag emoji prefix is always present
+        assert result.startswith("💰 ")
+        # Verify currency symbols are present
+        assert "€" in result
         assert "today" in result
         assert "month" in result
         # Session should not appear without session data
@@ -108,9 +116,8 @@ class TestFormatStatusLine:
             usd_to_eur_rate=0.92,
         )
 
-        # Should contain daily budget info
-        assert "2.50" in result or "2.5" in result
-        assert "5" in result
+        # Should contain daily budget info with currency symbols
+        assert "€2.50/€5 today" in result
 
     def test_format_shows_monthly_budget(self) -> None:
         """Test that monthly budget info is shown correctly."""
@@ -124,9 +131,8 @@ class TestFormatStatusLine:
             usd_to_eur_rate=0.92,
         )
 
-        # Should contain monthly budget info
-        assert "73" in result
-        assert "90" in result
+        # Should contain monthly budget info with currency symbols
+        assert "€73/€90 month" in result
 
     def test_format_usd_to_eur_conversion(self) -> None:
         """Test that USD session cost is converted to EUR."""
@@ -142,11 +148,11 @@ class TestFormatStatusLine:
             usd_to_eur_rate=0.92,
         )
 
-        # $1.00 USD * 0.92 = 0.92 EUR
-        assert "0.92" in result
+        # $1.00 USD * 0.92 = 0.92 EUR, with currency symbol
+        assert "€0.92 session" in result
 
     def test_format_uses_currency_symbol(self) -> None:
-        """Test that correct currency symbol is used."""
+        """Test that correct currency symbol is used for EUR."""
         result = format_status_line(
             session_data=None,
             daily_spent=2.0,
@@ -157,8 +163,42 @@ class TestFormatStatusLine:
             usd_to_eur_rate=0.92,
         )
 
-        # Should not contain $ for EUR currency
+        # Should contain EUR symbol and not USD symbol
+        assert "€" in result
         assert "$" not in result
+
+    def test_format_uses_usd_symbol_for_usd(self) -> None:
+        """Test that USD currency uses dollar symbol."""
+        result = format_status_line(
+            session_data=None,
+            daily_spent=2.0,
+            daily_budget=5.0,
+            monthly_spent=50.0,
+            monthly_budget=90.0,
+            currency="USD",
+            usd_to_eur_rate=1.0,
+        )
+
+        # Should contain USD symbol and not EUR symbol
+        assert "$" in result
+        assert "€" not in result
+
+    def test_format_exact_output(self) -> None:
+        """Test exact output format matches DESIGN.md specification."""
+        session_data = {"cost": {"total_cost_usd": 0.054347826}}  # ~0.05 EUR
+
+        result = format_status_line(
+            session_data=session_data,
+            daily_spent=2.30,
+            daily_budget=5.0,
+            monthly_spent=73.0,
+            monthly_budget=90.0,
+            currency="EUR",
+            usd_to_eur_rate=0.92,
+        )
+
+        # Expected: 💰 €0.05 session | €2.30/€5 today | €73/€90 month
+        assert result == "💰 €0.05 session | €2.30/€5 today | €73/€90 month"
 
 
 class TestStatusLineCommand:
