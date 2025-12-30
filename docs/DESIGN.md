@@ -122,6 +122,76 @@ This gives you:
 - ✅ Budget tracking from Claudius
 - ✅ Smart routing from Claudius
 
+### 5. Claude Code Status Line Integration (NEW!)
+
+Claude Code supports custom status lines! Claudius can show budget info directly in Claude Code's UI:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Claude Code                                              │
+│                                                          │
+│ You: Help me refactor this...                           │
+│ 🤖: Sure, let me...                                     │
+│                                                          │
+├─────────────────────────────────────────────────────────┤
+│ 💰 €2.30/€5 today | €73/€90 month | [Haiku] | main      │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Setup:** Add to `~/.claude/settings.json`:
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "claudius status-line"
+  }
+}
+```
+
+**How it works:**
+1. Claude Code sends JSON with token/cost data to stdin
+2. `claudius status-line` reads it, adds budget tracking info
+3. Outputs formatted status line to stdout
+4. Updates in real-time (max every 300ms)
+
+**Data available from Claude Code:**
+- `cost.total_cost_usd` - Running session cost
+- `cost.total_duration_ms` - Session duration
+- `context_window.total_input_tokens` / `total_output_tokens`
+- `context_window.current_usage` - Current context state
+
+### 6. Claude Code Hooks Integration
+
+Use hooks for advanced tracking:
+
+**PostToolUse Hook** - Track after each tool call:
+```json
+{
+  "hooks": {
+    "PostToolUse": [{
+      "matcher": "*",
+      "command": "claudius track-usage"
+    }]
+  }
+}
+```
+
+**Stop Hook** - Log when response finishes:
+```json
+{
+  "hooks": {
+    "Stop": [{
+      "command": "claudius log-response"
+    }]
+  }
+}
+```
+
+**Potential uses:**
+- Real-time cost alerts ("⚠️ This response cost €0.50!")
+- Session summaries
+- Usage logging to external systems
+
 ## Technical Architecture
 
 ```
@@ -334,6 +404,125 @@ echo 'export ANTHROPIC_BASE_URL=http://localhost:4000' >> ~/.zshrc
 1. Should we support other providers via LiteLLM, or stay Claude-only?
 2. Should the proxy auto-start on system boot option?
 3. Team features - shared budgets, multiple API keys?
+
+---
+
+## 🧠 Brainstorm: Ideas to Consider Before Building
+
+### Smart Routing Enhancements
+
+| Idea | Description | Priority |
+|------|-------------|----------|
+| **Context-aware routing** | If conversation already used Opus, stay with Opus for continuity | Medium |
+| **File-type routing** | Python files → Sonnet, architecture docs → Opus | Low |
+| **Time-of-day routing** | Cheaper models during non-work hours | Low |
+| **Retry with escalation** | If Haiku fails/gives poor answer, auto-retry with Sonnet | High |
+| **User feedback loop** | "Was this answer good?" → improves routing over time | Future |
+
+### Budget Features
+
+| Idea | Description | Priority |
+|------|-------------|----------|
+| **Budget inheritance** | Daily unused → weekly pool → monthly pool | High |
+| **Emergency reserve** | Keep €5 always available for urgent queries | Medium |
+| **Project budgets** | Different budgets per git repo/project | Medium |
+| **Spending velocity alerts** | "You're spending 3x faster than usual today" | Medium |
+| **Predicted runout** | "At this rate, budget runs out in 6 days" | High |
+
+### UX Ideas
+
+| Idea | Description | Priority |
+|------|-------------|----------|
+| **Quick budget check** | `claudius` with no args shows status, doesn't start REPL | High |
+| **Desktop notifications** | macOS/Linux notifications for budget alerts | Medium |
+| **Sound alerts** | Optional beep when hitting limits | Low |
+| **Color themes** | Match terminal theme (dark/light) | Low |
+| **Compact mode** | Minimal UI for small terminals | Medium |
+
+### Integration Ideas
+
+| Idea | Description | Priority |
+|------|-------------|----------|
+| **Claude Code plugin** | Package as official plugin for easy install | High |
+| **VS Code extension** | Show budget in VS Code status bar | Future |
+| **Raycast/Alfred** | Quick budget check from launcher | Low |
+| **iOS Shortcut** | Check budget from phone | Future |
+| **Telegram/Discord bot** | Budget alerts and status | Low |
+
+### Data & Analytics
+
+| Idea | Description | Priority |
+|------|-------------|----------|
+| **Usage patterns** | "You use most tokens on Mondays" | Future |
+| **Model efficiency** | "Haiku handled 73% of your queries" | Medium |
+| **Cost per project** | Track spending by git repo | Medium |
+| **Export to CSV** | For expense reports | Medium |
+| **Grafana dashboard** | For power users | Future |
+
+### Security & Privacy
+
+| Idea | Description | Priority |
+|------|-------------|----------|
+| **Query preview opt-out** | Don't store query text, only metadata | High |
+| **Local-only mode** | Never send anything to external services | Default |
+| **API key rotation** | Support multiple keys, rotate on limits | Medium |
+| **Encrypted storage** | Encrypt SQLite db | Low |
+
+### Edge Cases to Handle
+
+| Scenario | How to Handle |
+|----------|---------------|
+| Proxy crashes mid-request | Queue request, restart proxy, retry |
+| API returns error | Don't count against budget |
+| Clock/timezone changes | Use UTC internally |
+| Multiple Claudius instances | File lock on SQLite |
+| Very long responses | Stream cost updates |
+| Offline mode | Queue requests? Or just fail gracefully |
+
+### CLI Subcommands to Add
+
+```bash
+claudius                    # Interactive mode + proxy (default)
+claudius status             # Quick budget check (no REPL)
+claudius status-line        # For Claude Code integration (stdin/stdout)
+claudius history [days]     # Show usage history
+claudius export [format]    # Export to CSV/JSON
+claudius config             # Open config in $EDITOR
+claudius reset-daily        # Manual daily reset (for testing)
+claudius doctor             # Diagnose issues
+```
+
+### Things NOT to Build (Keep It Simple)
+
+- ❌ Web dashboard (v1) - CLI is enough
+- ❌ User accounts/auth - It's a local tool
+- ❌ Multi-provider support (v1) - Claude-only first
+- ❌ Complex ML routing - Heuristics + Haiku is enough
+- ❌ Mobile app - Overkill
+- ❌ Cloud sync - Local-first philosophy
+
+---
+
+## Implementation Priority for v1.0
+
+### Must Have (MVP)
+1. ✅ Proxy server that works with Claude Code
+2. ✅ Basic budget tracking (daily/monthly)
+3. ✅ SQLite storage
+4. ✅ Status line command for Claude Code
+5. ✅ Simple config file
+
+### Should Have (v1.0)
+1. Smart routing (Haiku gatekeeper)
+2. Rollover budgets
+3. Interactive REPL mode
+4. Progress bars and nice UI
+
+### Nice to Have (v1.1+)
+1. Hooks integration
+2. Export functionality
+3. Desktop notifications
+4. Project-based budgets
 
 ---
 
