@@ -1,11 +1,11 @@
 # ABOUTME: FastAPI proxy server for Anthropic API requests
-# ABOUTME: Intercepts, forwards, and handles streaming responses
+# ABOUTME: Intercepts, forwards, and handles streaming responses with cost tracking
 
 """
 Claudius Proxy Server.
 
 A transparent proxy that sits between Claude clients and the Anthropic API.
-Handles both regular and streaming (SSE) responses.
+Handles both regular and streaming (SSE) responses with cost tracking.
 """
 
 import asyncio
@@ -18,12 +18,17 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
+from claudius.budget import BudgetTracker
 from claudius.config import RateLimitConfig
+from claudius.pricing import calculate_cost
 
 ANTHROPIC_API_URL = "https://api.anthropic.com"
 
 # Default rate limit config (can be overridden via set_rate_limit_config)
 _rate_limit_config = RateLimitConfig()
+
+# Budget tracker (optional, set via set_budget_tracker)
+_budget_tracker: BudgetTracker | None = None
 
 
 def set_rate_limit_config(config: RateLimitConfig) -> None:
@@ -40,20 +45,38 @@ def get_rate_limit_config() -> RateLimitConfig:
     """Get the current rate limit configuration."""
     return _rate_limit_config
 
+
+def set_budget_tracker(tracker: BudgetTracker | None) -> None:
+    """Set the budget tracker for cost recording.
+
+    This allows external code to configure budget tracking
+    (e.g., from a config file) before or after creating the app.
+    """
+    global _budget_tracker
+    _budget_tracker = tracker
+
+
+def get_budget_tracker() -> BudgetTracker | None:
+    """Get the current budget tracker."""
+    return _budget_tracker
+
+
 # Headers to filter out when forwarding requests
 FILTERED_REQUEST_HEADERS = frozenset({"host", "content-length"})
 
 # Hop-by-hop headers to filter from responses (RFC 2616)
-HOP_BY_HOP_HEADERS = frozenset({
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailers",
-    "transfer-encoding",
-    "upgrade",
-})
+HOP_BY_HOP_HEADERS = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,13 +124,9 @@ def create_app() -> FastAPI:
         logger.debug(f"Forwarding request to {target_url}")
 
         if is_streaming:
-            return await _handle_streaming_request(
-                target_url, forwarded_headers, body
-            )
+            return await _handle_streaming_request(target_url, forwarded_headers, body)
         else:
-            return await _handle_regular_request(
-                target_url, forwarded_headers, body
-            )
+            return await _handle_regular_request(target_url, forwarded_headers, body)
 
     return app
 
@@ -115,24 +134,50 @@ def create_app() -> FastAPI:
 def _filter_request_headers(headers: Any) -> dict[str, str]:
     """Filter out headers that shouldn't be forwarded."""
     return {
-        key: value
-        for key, value in headers.items()
-        if key.lower() not in FILTERED_REQUEST_HEADERS
+        key: value for key, value in headers.items() if key.lower() not in FILTERED_REQUEST_HEADERS
     }
 
 
 def _filter_response_headers(headers: Any) -> dict[str, str]:
     """Filter out hop-by-hop headers from response."""
-    return {
-        key: value
-        for key, value in headers.items()
-        if key.lower() not in HOP_BY_HOP_HEADERS
-    }
+    return {key: value for key, value in headers.items() if key.lower() not in HOP_BY_HOP_HEADERS}
 
 
-async def _handle_regular_request(
-    url: str, headers: dict[str, str], body: bytes
-) -> Response:
+def _record_usage_from_response(content: bytes) -> None:
+    """Extract usage from response JSON and record to budget tracker.
+
+    Args:
+        content: Response body as bytes (should be JSON)
+    """
+    tracker = _budget_tracker
+    if tracker is None:
+        return
+
+    try:
+        data = json.loads(content)
+        model = data.get("model", "")
+        usage = data.get("usage", {})
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+
+        if model and (input_tokens > 0 or output_tokens > 0):
+            cost = calculate_cost(model, input_tokens, output_tokens)
+            tracker.record_usage(
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost=cost,
+                routed_by="proxy",
+            )
+            logger.debug(
+                f"Recorded usage: {model} - {input_tokens} in, "
+                f"{output_tokens} out, cost: €{cost:.6f}"
+            )
+    except (json.JSONDecodeError, TypeError, KeyError) as e:
+        logger.warning(f"Failed to parse response for cost tracking: {e}")
+
+
+async def _handle_regular_request(url: str, headers: dict[str, str], body: bytes) -> Response:
     """Handle a regular (non-streaming) request with rate limit retry."""
     config = _rate_limit_config
     delay = config.initial_delay
@@ -163,6 +208,10 @@ async def _handle_regular_request(
                         logger.warning(
                             f"Rate limited - max retries ({config.max_retries}) exceeded"
                         )
+
+                # Record cost for successful responses
+                if response.status_code == 200:
+                    _record_usage_from_response(response.content)
 
                 return Response(
                     content=response.content,
@@ -241,9 +290,7 @@ async def _handle_streaming_request(
                 delay *= config.backoff_multiplier
                 continue
             else:
-                logger.warning(
-                    f"Rate limited - max retries ({config.max_retries}) exceeded"
-                )
+                logger.warning(f"Rate limited - max retries ({config.max_retries}) exceeded")
                 # Return 429 as a regular response
                 return Response(
                     content=content,
@@ -258,19 +305,95 @@ async def _handle_streaming_request(
     raise HTTPException(status_code=500, detail="Unexpected error in retry logic")
 
 
+class StreamingUsageAccumulator:
+    """Accumulates usage data from streaming SSE events."""
+
+    def __init__(self) -> None:
+        self.model: str = ""
+        self.input_tokens: int = 0
+        self.output_tokens: int = 0
+        self._buffer: str = ""
+
+    def process_chunk(self, chunk: bytes) -> None:
+        """Process a chunk of SSE data and extract usage information."""
+        self._buffer += chunk.decode("utf-8", errors="replace")
+        self._process_buffer()
+
+    def _process_buffer(self) -> None:
+        """Process complete SSE events from the buffer."""
+        while "\n\n" in self._buffer:
+            event_end = self._buffer.index("\n\n")
+            event_data = self._buffer[:event_end]
+            self._buffer = self._buffer[event_end + 2 :]
+            self._parse_event(event_data)
+
+    def _parse_event(self, event_data: str) -> None:
+        """Parse a single SSE event and extract usage data."""
+        data_line = None
+        for line in event_data.split("\n"):
+            if line.startswith("data: "):
+                data_line = line[6:]
+                break
+
+        if not data_line:
+            return
+
+        try:
+            data = json.loads(data_line)
+            event_type = data.get("type", "")
+
+            if event_type == "message_start":
+                message = data.get("message", {})
+                self.model = message.get("model", "")
+                usage = message.get("usage", {})
+                self.input_tokens = usage.get("input_tokens", 0)
+
+            elif event_type == "message_delta":
+                usage = data.get("usage", {})
+                output_tokens = usage.get("output_tokens", 0)
+                if output_tokens > 0:
+                    self.output_tokens = output_tokens
+
+        except (json.JSONDecodeError, TypeError, KeyError):
+            pass
+
+    def record_usage(self) -> None:
+        """Record accumulated usage to the budget tracker."""
+        tracker = _budget_tracker
+        if tracker is None:
+            return
+
+        if self.model and (self.input_tokens > 0 or self.output_tokens > 0):
+            cost = calculate_cost(self.model, self.input_tokens, self.output_tokens)
+            tracker.record_usage(
+                model=self.model,
+                input_tokens=self.input_tokens,
+                output_tokens=self.output_tokens,
+                cost=cost,
+                routed_by="proxy",
+            )
+            logger.debug(
+                f"Recorded streaming usage: {self.model} - {self.input_tokens} in, "
+                f"{self.output_tokens} out, cost: €{cost:.6f}"
+            )
+
+
 def _create_streaming_response(
     response: httpx.Response,
     stream_context: Any,
     client: httpx.AsyncClient,
 ) -> StreamingResponse:
-    """Create a streaming response with proper cleanup."""
+    """Create a streaming response with proper cleanup and cost tracking."""
+    accumulator = StreamingUsageAccumulator()
 
     async def stream_generator() -> AsyncGenerator[bytes, None]:
         try:
             logger.debug(f"Streaming response started: {response.status_code}")
             async for chunk in response.aiter_bytes():
+                accumulator.process_chunk(chunk)
                 yield chunk
         finally:
+            accumulator.record_usage()
             await stream_context.__aexit__(None, None, None)
             await client.aclose()
 

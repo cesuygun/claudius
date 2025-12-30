@@ -4,12 +4,11 @@
 """Tests for Claudius budget tracker."""
 
 import tempfile
-from datetime import date
 from pathlib import Path
 
 import pytest
 
-from claudius.budget import BudgetTracker, BudgetStatus
+from claudius.budget import BudgetStatus, BudgetTracker
 
 
 class TestBudgetTracker:

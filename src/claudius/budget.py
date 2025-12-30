@@ -13,9 +13,8 @@ Manages budget tracking with:
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
 
 DB_PATH = Path.home() / ".claudius" / "claudius.db"
 
@@ -100,8 +99,8 @@ class BudgetTracker:
         input_tokens: int,
         output_tokens: int,
         cost: float,
-        routed_by: Optional[str] = None,
-        query_preview: Optional[str] = None,
+        routed_by: str | None = None,
+        query_preview: str | None = None,
     ) -> None:
         """Record an API call."""
         with sqlite3.connect(self.db_path) as conn:
@@ -110,10 +109,17 @@ class BudgetTracker:
                 INSERT INTO usage (model, input_tokens, output_tokens, cost, routed_by, query_preview)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (model, input_tokens, output_tokens, cost, routed_by, query_preview[:100] if query_preview else None),
+                (
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    cost,
+                    routed_by,
+                    query_preview[:100] if query_preview else None,
+                ),
             )
 
-    def get_daily_spent(self, day: Optional[date] = None) -> float:
+    def get_daily_spent(self, day: date | None = None) -> float:
         """Get total spent for a day."""
         day = day or date.today()
         with sqlite3.connect(self.db_path) as conn:
@@ -123,7 +129,7 @@ class BudgetTracker:
             ).fetchone()
             return result[0] if result else 0.0
 
-    def get_monthly_spent(self, year: Optional[int] = None, month: Optional[int] = None) -> float:
+    def get_monthly_spent(self, year: int | None = None, month: int | None = None) -> float:
         """Get total spent for a month."""
         now = datetime.now()
         year = year or now.year

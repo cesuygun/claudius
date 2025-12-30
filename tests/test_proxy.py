@@ -249,7 +249,9 @@ class TestMessagesEndpointResponses:
             mock_response = MagicMock()
             mock_response.status_code = 400
             mock_response.headers = {"content-type": "application/json"}
-            mock_response.content = b'{"error": {"type": "invalid_request_error", "message": "Invalid model"}}'
+            mock_response.content = (
+                b'{"error": {"type": "invalid_request_error", "message": "Invalid model"}}'
+            )
             mock_client.post.return_value = mock_response
 
             response = client.post(
