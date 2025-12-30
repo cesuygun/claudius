@@ -134,10 +134,31 @@ class Config:
     @classmethod
     def _from_dict(cls, data: dict[str, Any]) -> "Config":
         """Create Config from dictionary."""
+        # Filter to only known fields for each config class
+        api_fields = {k: v for k, v in data.get("api", {}).items() if k in ("key",)}
+        budget_fields = {
+            k: v
+            for k, v in data.get("budget", {}).items()
+            if k in ("monthly", "daily_soft", "daily_hard", "rollover", "max_rollover", "currency")
+        }
+        routing_fields = {
+            k: v
+            for k, v in data.get("routing", {}).items()
+            if k in ("default", "escalate_to", "auto_classify")
+        }
+        proxy_fields = {
+            k: v for k, v in data.get("proxy", {}).items() if k in ("host", "port")
+        }
+        rate_limit_fields = {
+            k: v
+            for k, v in data.get("rate_limit", {}).items()
+            if k in ("max_retries", "initial_delay", "backoff_multiplier")
+        }
+
         return cls(
-            api=ApiConfig(**data.get("api", {})),
-            budget=BudgetConfig(**data.get("budget", {})),
-            routing=RoutingConfig(**data.get("routing", {})),
-            proxy=ProxyConfig(**data.get("proxy", {})),
-            rate_limit=RateLimitConfig(**data.get("rate_limit", {})),
+            api=ApiConfig(**api_fields),
+            budget=BudgetConfig(**budget_fields),
+            routing=RoutingConfig(**routing_fields),
+            proxy=ProxyConfig(**proxy_fields),
+            rate_limit=RateLimitConfig(**rate_limit_fields),
         )
