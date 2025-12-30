@@ -168,6 +168,12 @@ def create_app() -> FastAPI:
         system = body_json.get("system")
         tools = body_json.get("tools")
 
+        # Validate required fields
+        if not model:
+            raise HTTPException(status_code=400, detail="Missing required field: model")
+        if not messages:
+            raise HTTPException(status_code=400, detail="Missing required field: messages")
+
         try:
             result = await estimate_cost(
                 messages=messages,

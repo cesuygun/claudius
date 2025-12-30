@@ -209,6 +209,46 @@ class TestEstimateOutputTokens:
         assert min_tokens > 0
         assert max_tokens > min_tokens
 
+    def test_boundary_at_50_input_tokens(self) -> None:
+        """Test boundary behavior at input_tokens=50 (short->medium transition)."""
+        # 49 tokens should be "short" category
+        short_min, short_max = estimate_output_tokens(
+            input_tokens=49,
+            model="claude-3-5-haiku-20241022",
+        )
+
+        # 50 tokens should be "medium" category
+        medium_min, medium_max = estimate_output_tokens(
+            input_tokens=50,
+            model="claude-3-5-haiku-20241022",
+        )
+
+        # Medium category should have higher base estimates than short
+        # Short: (50, 200) * 0.8 = (40, 160)
+        # Medium: (100, 500) * 0.8 = (80, 400)
+        assert medium_min > short_min
+        assert medium_max > short_max
+
+    def test_boundary_at_200_input_tokens(self) -> None:
+        """Test boundary behavior at input_tokens=200 (medium->long transition)."""
+        # 200 tokens should be "medium" category (inclusive)
+        medium_min, medium_max = estimate_output_tokens(
+            input_tokens=200,
+            model="claude-3-5-haiku-20241022",
+        )
+
+        # 201 tokens should be "long" category
+        long_min, long_max = estimate_output_tokens(
+            input_tokens=201,
+            model="claude-3-5-haiku-20241022",
+        )
+
+        # Long category should have higher base estimates than medium
+        # Medium: (100, 500) * 0.8 = (80, 400)
+        # Long: (200, 1000) * 0.8 = (160, 800)
+        assert long_min > medium_min
+        assert long_max > medium_max
+
 
 class TestEstimateCost:
     """Tests for the main estimate_cost function."""
@@ -316,3 +356,26 @@ class TestModelOutputMultipliers:
         haiku_mult = MODEL_OUTPUT_MULTIPLIERS.get("claude-3-5-haiku-20241022", 1.0)
         opus_mult = MODEL_OUTPUT_MULTIPLIERS.get("claude-opus-4-20250514", 1.0)
         assert haiku_mult <= sonnet_mult <= opus_mult
+
+
+class TestModelConsistency:
+    """Tests for model configuration consistency between modules."""
+
+    def test_model_output_multipliers_match_pricing(self) -> None:
+        """Test that MODEL_OUTPUT_MULTIPLIERS keys match MODEL_PRICING keys."""
+        from claudius.pricing import MODEL_PRICING
+
+        multiplier_models = set(MODEL_OUTPUT_MULTIPLIERS.keys())
+        pricing_models = set(MODEL_PRICING.keys())
+
+        # All models in multipliers should have pricing
+        missing_from_pricing = multiplier_models - pricing_models
+        assert not missing_from_pricing, (
+            f"Models in MODEL_OUTPUT_MULTIPLIERS but not in MODEL_PRICING: {missing_from_pricing}"
+        )
+
+        # All models in pricing should have multipliers
+        missing_from_multipliers = pricing_models - multiplier_models
+        assert not missing_from_multipliers, (
+            f"Models in MODEL_PRICING but not in MODEL_OUTPUT_MULTIPLIERS: {missing_from_multipliers}"
+        )
