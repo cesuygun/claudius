@@ -16,7 +16,33 @@ Claudius is a smart Claude API budget manager that provides intelligent model ro
 
 ## Core Features
 
-### 1. Smart Model Routing (Haiku Gatekeeper)
+### 1. Pre-flight Cost Estimation
+
+Before every request, Claudius shows you what it will cost:
+
+```
+You: How do I implement authentication in FastAPI?
+
+📊 Estimated cost: €0.02 - €0.08
+   Input: €0.01 (exact) | Output: €0.01-0.07 (estimated)
+   Model: Haiku (auto-selected)
+
+[Send] [Change Model] [Cancel]
+```
+
+**How it works:**
+- **Input tokens**: 100% accurate - counted before sending using tokenizer
+- **Output tokens**: Estimated range based on:
+  - Query type heuristics (yes/no → short, code gen → long)
+  - Model tendencies (Haiku concise, Opus verbose)
+  - Your historical usage patterns
+- **Display**: Always show a range, never a false precision single number
+
+**In proxy mode (Claude Code):**
+- Cost tracked and shown in status line after response
+- Pre-flight estimation available via `claudius estimate` command
+
+### 2. Smart Model Routing (Haiku Gatekeeper)
 
 ```
 Your Query
@@ -42,7 +68,7 @@ Haiku acts as gatekeeper AND cheap workhorse. Only escalates what it can't handl
 - Contains code blocks → Sonnet minimum
 - Keywords: "architect", "design", "complex" → Opus
 
-### 2. Budget Management
+### 3. Budget Management
 
 | Feature | Description |
 |---------|-------------|
@@ -52,7 +78,7 @@ Haiku acts as gatekeeper AND cheap workhorse. Only escalates what it can't handl
 | Rollover | Unused budget carries to next month |
 | Daily → Weekly pool | Unused daily allowance accumulates |
 
-### 3. Interactive CLI with Slash Commands
+### 4. Interactive CLI with Slash Commands
 
 ```bash
 $ claudius
@@ -100,7 +126,7 @@ Available commands:
   /quit       - Exit Claudius
 ```
 
-### 4. Claude Code Integration (Proxy Mode)
+### 5. Claude Code Integration (Proxy Mode)
 
 Claudius automatically starts a proxy server that Claude Code can use:
 
@@ -122,7 +148,7 @@ This gives you:
 - ✅ Budget tracking from Claudius
 - ✅ Smart routing from Claudius
 
-### 5. Claude Code Status Line Integration (NEW!)
+### 6. Claude Code Status Line Integration
 
 Claude Code supports custom status lines! Claudius can show budget info directly in Claude Code's UI:
 
@@ -160,7 +186,28 @@ Claude Code supports custom status lines! Claudius can show budget info directly
 - `context_window.total_input_tokens` / `total_output_tokens`
 - `context_window.current_usage` - Current context state
 
-### 6. Claude Code Hooks Integration
+### 7. Rate Limit Handling
+
+Claudius handles Anthropic API rate limits gracefully:
+
+```
+⏳ Rate limited - retrying in 5s (attempt 1/3)
+⏳ Rate limited - retrying in 15s (attempt 2/3)
+✓ Request succeeded after retry
+```
+
+**Features:**
+- **Automatic retry**: Exponential backoff (5s → 15s → 45s)
+- **Queue management**: Requests queue instead of failing
+- **Transparent to user**: Claude Code doesn't see errors, just slightly delayed responses
+- **Configurable**: Max retries, backoff multiplier in config
+
+**Why this matters:**
+- Heavy Claude Code sessions hit rate limits
+- Currently you get cryptic errors and have to retry manually
+- Claudius absorbs this complexity
+
+### 8. Claude Code Hooks Integration
 
 Use hooks for advanced tracking:
 
@@ -429,6 +476,15 @@ echo 'export ANTHROPIC_BASE_URL=http://localhost:4000' >> ~/.zshrc
 | **Spending velocity alerts** | "You're spending 3x faster than usual today" | Medium |
 | **Predicted runout** | "At this rate, budget runs out in 6 days" | High |
 
+### Cost Optimization Features (v1.1)
+
+| Idea | Description | Priority |
+|------|-------------|----------|
+| **Semantic caching** | Cache responses to identical/similar queries. Different from Anthropic's prompt caching (which caches conversation context). This caches actual responses across sessions. | High |
+| **Cache similarity threshold** | How similar must queries be to return cached response? (exact match vs fuzzy) | Medium |
+| **Cache TTL** | How long to keep cached responses valid | Medium |
+| **Cache storage** | SQLite for small, Redis for large deployments | Low |
+
 ### UX Ideas
 
 | Idea | Description | Priority |
@@ -506,11 +562,13 @@ claudius doctor             # Diagnose issues
 ## Implementation Priority for v1.0
 
 ### Must Have (MVP)
-1. ✅ Proxy server that works with Claude Code
-2. ✅ Basic budget tracking (daily/monthly)
-3. ✅ SQLite storage
-4. ✅ Status line command for Claude Code
-5. ✅ Simple config file
+1. Proxy server that works with Claude Code
+2. Basic budget tracking (daily/monthly)
+3. SQLite storage ✅ (implemented)
+4. Simple config file ✅ (implemented)
+5. Status line command for Claude Code
+6. **Pre-flight cost estimation** (input exact, output range)
+7. **Rate limit handling** (automatic retry with backoff)
 
 ### Should Have (v1.0)
 1. Smart routing (Haiku gatekeeper)
@@ -519,11 +577,13 @@ claudius doctor             # Diagnose issues
 4. Progress bars and nice UI
 
 ### Nice to Have (v1.1+)
-1. Hooks integration
-2. Export functionality
-3. Desktop notifications
-4. Project-based budgets
+1. **Semantic caching** - Cache responses to avoid paying twice for identical queries
+2. Hooks integration
+3. Export functionality
+4. Desktop notifications
+5. Project-based budgets
 
 ---
 
 *Designed by Doctor Biz & Opus • December 2024*
+*Updated: December 2025 - Added pre-flight estimation, rate limit handling, semantic caching roadmap*
