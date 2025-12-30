@@ -13,15 +13,23 @@ Features:
 """
 
 import argparse
+import asyncio
 import json
+import os
+import socket
 import sys
+import threading
+import time
 from typing import IO, Any
 
+import uvicorn
 from rich.console import Console
 from rich.panel import Panel
 
 from claudius.budget import BudgetTracker
 from claudius.config import Config
+from claudius.proxy import create_app, set_api_config, set_budget_tracker, set_rate_limit_config
+from claudius.repl import ClaudiusREPL
 
 console = Console()
 
@@ -169,8 +177,108 @@ def status_line_command(
     stdout.write(status + "\n")
 
 
-def main() -> None:
-    """Main entry point for Claudius CLI."""
+def check_port_available(host: str, port: int) -> bool:
+    """Check if a port is available for binding.
+
+    Args:
+        host: Host address to check.
+        port: Port number to check.
+
+    Returns:
+        True if the port is available, False otherwise.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def resolve_api_key(config: Config) -> str | None:
+    """Resolve API key from config or environment.
+
+    Order of precedence:
+    1. Config file (config.api.key)
+    2. Environment variable (ANTHROPIC_API_KEY)
+
+    Args:
+        config: Configuration object.
+
+    Returns:
+        API key string or None if not found.
+    """
+    if config.api.key:
+        return config.api.key
+    return os.environ.get("ANTHROPIC_API_KEY")
+
+
+def run_proxy_server(host: str, port: int) -> None:
+    """Run the proxy server in a background thread.
+
+    Args:
+        host: Host address to bind to.
+        port: Port number to bind to.
+    """
+    app = create_app()
+    uvicorn.run(app, host=host, port=port, log_level="error")
+
+
+def _start_interactive_mode() -> None:
+    """Start Claudius in interactive mode with REPL and proxy server."""
+    # Load config
+    config = Config.load()
+
+    # Get API key (from config or env)
+    api_key = resolve_api_key(config)
+    if not api_key:
+        console.print(
+            "[red]Error: No API key found.[/red]\n"
+            "Set ANTHROPIC_API_KEY environment variable or add to ~/.claudius/config.toml"
+        )
+        return
+
+    # Check if port is available
+    if not check_port_available(config.proxy.host, config.proxy.port):
+        console.print(
+            f"[red]Error: Port {config.proxy.port} is already in use.[/red]\n"
+            "Another Claudius instance may be running, or try a different port in "
+            "~/.claudius/config.toml"
+        )
+        return
+
+    # Initialize budget tracker
+    tracker = BudgetTracker()
+
+    # Configure proxy with rate limit, API config, and budget tracker
+    set_rate_limit_config(config.rate_limit)
+    set_api_config(config.api)
+    set_budget_tracker(tracker)
+
+    # Start proxy server in background thread
+    proxy_thread = threading.Thread(
+        target=run_proxy_server,
+        args=(config.proxy.host, config.proxy.port),
+        daemon=True,
+    )
+    proxy_thread.start()
+
+    # Give proxy time to start
+    time.sleep(0.5)
+
+    # Run REPL
+    repl = ClaudiusREPL(tracker, config, api_key)
+    asyncio.run(repl.run())
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Main entry point for Claudius CLI.
+
+    Args:
+        argv: Command line arguments (defaults to sys.argv[1:]).
+    """
     parser = argparse.ArgumentParser(
         prog="claudius",
         description="Your AI Budget Guardian - Smart Claude API cost management",
@@ -183,15 +291,13 @@ def main() -> None:
         help="Output budget status line for Claude Code integration",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.command == "status-line":
         status_line_command()
     else:
-        # Default: show banner
-        print_banner()
-        console.print("\n[yellow]Claudius is under construction![/yellow]")
-        console.print("[dim]Coming soon: budget tracking, smart routing, and more.[/dim]\n")
+        # Default: start REPL + proxy server
+        _start_interactive_mode()
 
 
 if __name__ == "__main__":
