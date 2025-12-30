@@ -1,7 +1,7 @@
-# ABOUTME: GitHub Sponsors configuration for Claudius
+# ABOUTME: Funding configuration for Claudius
 # ABOUTME: Enables the "Sponsor" button on the repository
 
-github: [cesuygun]
 ko_fi: cesuygun
-# buy_me_a_coffee: cesuygun  # Uncomment if you set this up
-# custom: ["https://your-link.com"]
+
+# Uncomment when enrolled in GitHub Sponsors:
+# github: [cesuygun]
