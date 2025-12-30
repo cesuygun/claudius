@@ -8,6 +8,7 @@ A transparent proxy that sits between Claude clients and the Anthropic API.
 Handles both regular and streaming (SSE) responses.
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -17,7 +18,12 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
+from claudius.config import RateLimitConfig
+
 ANTHROPIC_API_URL = "https://api.anthropic.com"
+
+# Default rate limit config (can be overridden via create_app)
+_rate_limit_config = RateLimitConfig()
 
 # Headers to filter out when forwarding requests
 FILTERED_REQUEST_HEADERS = frozenset({"host", "content-length"})
@@ -112,68 +118,137 @@ def _filter_response_headers(headers: Any) -> dict[str, str]:
 async def _handle_regular_request(
     url: str, headers: dict[str, str], body: bytes
 ) -> Response:
-    """Handle a regular (non-streaming) request."""
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                headers=headers,
-                content=body,
-                timeout=300.0,  # 5 minute timeout for long requests
-            )
+    """Handle a regular (non-streaming) request with rate limit retry."""
+    config = _rate_limit_config
+    delay = config.initial_delay
 
-            logger.debug(f"Response received: {response.status_code}")
+    for attempt in range(config.max_retries + 1):
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    content=body,
+                    timeout=300.0,  # 5 minute timeout for long requests
+                )
 
-            return Response(
-                content=response.content,
-                status_code=response.status_code,
-                headers=_filter_response_headers(response.headers),
-            )
-    except httpx.ConnectError as e:
-        logger.error(f"Failed to connect to Anthropic API: {e}")
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to connect to Anthropic API",
-        ) from e
-    except httpx.TimeoutException as e:
-        logger.error(f"Request to Anthropic API timed out: {e}")
-        raise HTTPException(
-            status_code=502,
-            detail="Request to Anthropic API timed out",
-        ) from e
+                logger.debug(f"Response received: {response.status_code}")
+
+                # Check for rate limit (429)
+                if response.status_code == 429:
+                    if attempt < config.max_retries:
+                        logger.warning(
+                            f"Rate limited - retrying in {delay}s "
+                            f"(attempt {attempt + 1}/{config.max_retries})"
+                        )
+                        await asyncio.sleep(delay)
+                        delay *= config.backoff_multiplier
+                        continue
+                    else:
+                        logger.warning(
+                            f"Rate limited - max retries ({config.max_retries}) exceeded"
+                        )
+
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    headers=_filter_response_headers(response.headers),
+                )
+        except httpx.ConnectError as e:
+            logger.error(f"Failed to connect to Anthropic API: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to connect to Anthropic API",
+            ) from e
+        except httpx.TimeoutException as e:
+            logger.error(f"Request to Anthropic API timed out: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail="Request to Anthropic API timed out",
+            ) from e
+
+    # This should never be reached, but satisfy type checker
+    raise HTTPException(status_code=500, detail="Unexpected error in retry logic")
 
 
 async def _handle_streaming_request(
     url: str, headers: dict[str, str], body: bytes
-) -> StreamingResponse:
-    """Handle a streaming (SSE) request."""
-    client = httpx.AsyncClient()
+) -> StreamingResponse | Response:
+    """Handle a streaming (SSE) request with rate limit retry."""
+    config = _rate_limit_config
+    delay = config.initial_delay
 
-    # Start the stream connection before returning the response
-    # This allows connection errors to be caught and returned as proper HTTP errors
-    try:
-        stream_context = client.stream(
-            "POST",
-            url,
-            headers=headers,
-            content=body,
-            timeout=300.0,
-        )
-        response = await stream_context.__aenter__()
-    except httpx.ConnectError as e:
-        await client.aclose()
-        logger.error(f"Failed to connect to Anthropic API: {e}")
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to connect to Anthropic API",
-        ) from e
-    except httpx.TimeoutException as e:
-        await client.aclose()
-        logger.error(f"Request to Anthropic API timed out: {e}")
-        raise HTTPException(
-            status_code=502,
-            detail="Request to Anthropic API timed out",
-        ) from e
+    for attempt in range(config.max_retries + 1):
+        client = httpx.AsyncClient()
+
+        # Start the stream connection before returning the response
+        # This allows connection errors to be caught and returned as proper HTTP errors
+        try:
+            stream_context = client.stream(
+                "POST",
+                url,
+                headers=headers,
+                content=body,
+                timeout=300.0,
+            )
+            response = await stream_context.__aenter__()
+        except httpx.ConnectError as e:
+            await client.aclose()
+            logger.error(f"Failed to connect to Anthropic API: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to connect to Anthropic API",
+            ) from e
+        except httpx.TimeoutException as e:
+            await client.aclose()
+            logger.error(f"Request to Anthropic API timed out: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail="Request to Anthropic API timed out",
+            ) from e
+
+        # Check for rate limit (429) before streaming
+        if response.status_code == 429:
+            # Read the response content before closing
+            content = await response.aread()
+            response_headers = dict(response.headers)
+
+            # Clean up this connection
+            await stream_context.__aexit__(None, None, None)
+            await client.aclose()
+
+            if attempt < config.max_retries:
+                logger.warning(
+                    f"Rate limited - retrying in {delay}s "
+                    f"(attempt {attempt + 1}/{config.max_retries})"
+                )
+                await asyncio.sleep(delay)
+                delay *= config.backoff_multiplier
+                continue
+            else:
+                logger.warning(
+                    f"Rate limited - max retries ({config.max_retries}) exceeded"
+                )
+                # Return 429 as a regular response
+                return Response(
+                    content=content,
+                    status_code=429,
+                    headers=_filter_response_headers(response_headers),
+                )
+
+        # Success or other error - proceed with streaming
+        return _create_streaming_response(response, stream_context, client)
+
+    # This should never be reached, but satisfy type checker
+    raise HTTPException(status_code=500, detail="Unexpected error in retry logic")
+
+
+def _create_streaming_response(
+    response: httpx.Response,
+    stream_context: Any,
+    client: httpx.AsyncClient,
+) -> StreamingResponse:
+    """Create a streaming response with proper cleanup."""
 
     async def stream_generator() -> AsyncGenerator[bytes, None]:
         try:

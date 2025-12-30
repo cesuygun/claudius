@@ -39,6 +39,11 @@ opus_keywords = ["architect", "design", "complex", "plan", "analyze"]
 host = "127.0.0.1"
 port = 4000
 
+[rate_limit]
+max_retries = 3
+initial_delay = 5
+backoff_multiplier = 3
+
 [alerts]
 daily_80_percent = true
 monthly_80_percent = true
@@ -81,12 +86,22 @@ class ProxyConfig:
 
 
 @dataclass
+class RateLimitConfig:
+    """Rate limit retry settings."""
+
+    max_retries: int = 3
+    initial_delay: int = 5  # seconds
+    backoff_multiplier: int = 3
+
+
+@dataclass
 class Config:
     """Main configuration container."""
 
     budget: BudgetConfig = field(default_factory=BudgetConfig)
     routing: RoutingConfig = field(default_factory=RoutingConfig)
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
+    rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
@@ -112,4 +127,5 @@ class Config:
             budget=BudgetConfig(**data.get("budget", {})),
             routing=RoutingConfig(**data.get("routing", {})),
             proxy=ProxyConfig(**data.get("proxy", {})),
+            rate_limit=RateLimitConfig(**data.get("rate_limit", {})),
         )
