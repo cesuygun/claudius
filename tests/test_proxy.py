@@ -498,3 +498,208 @@ class TestStreamingErrorHandling:
 
             assert response.status_code == 502
             assert "timed out" in response.json()["detail"].lower()
+
+
+class TestEstimateEndpoint:
+    """Tests for the /v1/estimate cost estimation endpoint."""
+
+    def test_estimate_requires_authorization(self) -> None:
+        """Test that POST /v1/estimate requires authentication."""
+        app = create_app()
+        client = TestClient(app)
+
+        response = client.post(
+            "/v1/estimate",
+            json={
+                "model": "claude-3-5-haiku-20241022",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+
+        assert response.status_code == 401
+        assert "Authorization" in response.json()["detail"]
+
+    def test_estimate_returns_estimation_result(self) -> None:
+        """Test that estimate endpoint returns cost estimation."""
+        app = create_app()
+        client = TestClient(app)
+
+        with patch("claudius.proxy.estimate_cost") as mock_estimate:
+            from claudius.estimation import EstimationResult
+
+            mock_estimate.return_value = EstimationResult(
+                input_tokens=100,
+                output_tokens_min=50,
+                output_tokens_max=200,
+                cost_min=0.001,
+                cost_max=0.005,
+                model="claude-3-5-haiku-20241022",
+            )
+
+            response = client.post(
+                "/v1/estimate",
+                json={
+                    "model": "claude-3-5-haiku-20241022",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                },
+                headers={"x-api-key": "sk-ant-test123"},
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["input_tokens"] == 100
+            assert data["output_tokens_min"] == 50
+            assert data["output_tokens_max"] == 200
+            assert data["cost_min"] == 0.001
+            assert data["cost_max"] == 0.005
+            assert data["model"] == "claude-3-5-haiku-20241022"
+
+    def test_estimate_passes_system_prompt(self) -> None:
+        """Test that estimate endpoint passes system prompt to estimation."""
+        app = create_app()
+        client = TestClient(app)
+
+        with patch("claudius.proxy.estimate_cost") as mock_estimate:
+            from claudius.estimation import EstimationResult
+
+            mock_estimate.return_value = EstimationResult(
+                input_tokens=150,
+                output_tokens_min=50,
+                output_tokens_max=200,
+                cost_min=0.001,
+                cost_max=0.005,
+                model="claude-3-5-haiku-20241022",
+            )
+
+            client.post(
+                "/v1/estimate",
+                json={
+                    "model": "claude-3-5-haiku-20241022",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "system": "You are a helpful assistant",
+                },
+                headers={"x-api-key": "sk-ant-test123"},
+            )
+
+            mock_estimate.assert_called_once()
+            call_kwargs = mock_estimate.call_args[1]
+            assert call_kwargs["system"] == "You are a helpful assistant"
+
+    def test_estimate_passes_tools(self) -> None:
+        """Test that estimate endpoint passes tools to estimation."""
+        app = create_app()
+        client = TestClient(app)
+
+        tools = [
+            {
+                "name": "get_weather",
+                "description": "Get weather",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ]
+
+        with patch("claudius.proxy.estimate_cost") as mock_estimate:
+            from claudius.estimation import EstimationResult
+
+            mock_estimate.return_value = EstimationResult(
+                input_tokens=200,
+                output_tokens_min=50,
+                output_tokens_max=200,
+                cost_min=0.001,
+                cost_max=0.005,
+                model="claude-3-5-haiku-20241022",
+            )
+
+            client.post(
+                "/v1/estimate",
+                json={
+                    "model": "claude-3-5-haiku-20241022",
+                    "messages": [{"role": "user", "content": "What's the weather?"}],
+                    "tools": tools,
+                },
+                headers={"x-api-key": "sk-ant-test123"},
+            )
+
+            mock_estimate.assert_called_once()
+            call_kwargs = mock_estimate.call_args[1]
+            assert call_kwargs["tools"] == tools
+
+    def test_estimate_extracts_api_key_from_x_api_key_header(self) -> None:
+        """Test that API key is extracted from x-api-key header."""
+        app = create_app()
+        client = TestClient(app)
+
+        with patch("claudius.proxy.estimate_cost") as mock_estimate:
+            from claudius.estimation import EstimationResult
+
+            mock_estimate.return_value = EstimationResult(
+                input_tokens=100,
+                output_tokens_min=50,
+                output_tokens_max=200,
+                cost_min=0.001,
+                cost_max=0.005,
+                model="claude-3-5-haiku-20241022",
+            )
+
+            client.post(
+                "/v1/estimate",
+                json={
+                    "model": "claude-3-5-haiku-20241022",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                },
+                headers={"x-api-key": "sk-ant-my-api-key"},
+            )
+
+            mock_estimate.assert_called_once()
+            call_kwargs = mock_estimate.call_args[1]
+            assert call_kwargs["api_key"] == "sk-ant-my-api-key"
+
+    def test_estimate_extracts_api_key_from_authorization_bearer(self) -> None:
+        """Test that API key is extracted from Authorization Bearer header."""
+        app = create_app()
+        client = TestClient(app)
+
+        with patch("claudius.proxy.estimate_cost") as mock_estimate:
+            from claudius.estimation import EstimationResult
+
+            mock_estimate.return_value = EstimationResult(
+                input_tokens=100,
+                output_tokens_min=50,
+                output_tokens_max=200,
+                cost_min=0.001,
+                cost_max=0.005,
+                model="claude-3-5-haiku-20241022",
+            )
+
+            client.post(
+                "/v1/estimate",
+                json={
+                    "model": "claude-3-5-haiku-20241022",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                },
+                headers={"Authorization": "Bearer sk-ant-bearer-key"},
+            )
+
+            mock_estimate.assert_called_once()
+            call_kwargs = mock_estimate.call_args[1]
+            assert call_kwargs["api_key"] == "sk-ant-bearer-key"
+
+    def test_estimate_handles_api_error(self) -> None:
+        """Test that estimate endpoint handles API errors gracefully."""
+        app = create_app()
+        client = TestClient(app)
+
+        with patch("claudius.proxy.estimate_cost") as mock_estimate:
+            mock_estimate.side_effect = Exception("API error")
+
+            response = client.post(
+                "/v1/estimate",
+                json={
+                    "model": "claude-3-5-haiku-20241022",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                },
+                headers={"x-api-key": "sk-ant-test123"},
+            )
+
+            assert response.status_code == 500
+            assert "estimation" in response.json()["detail"].lower()

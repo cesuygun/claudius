@@ -20,6 +20,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from claudius.budget import BudgetTracker
 from claudius.config import RateLimitConfig
+from claudius.estimation import estimate_cost
 from claudius.pricing import calculate_cost
 
 ANTHROPIC_API_URL = "https://api.anthropic.com"
@@ -127,6 +128,61 @@ def create_app() -> FastAPI:
             return await _handle_streaming_request(target_url, forwarded_headers, body)
         else:
             return await _handle_regular_request(target_url, forwarded_headers, body)
+
+    @app.post("/v1/estimate")
+    async def estimate_request_cost(request: Request) -> dict[str, Any]:
+        """Estimate the cost of an API request without sending it.
+
+        Returns exact input token count and estimated output token range
+        with corresponding cost range in EUR.
+        """
+        logger.info("Request received: POST /v1/estimate")
+
+        # Check for authentication
+        auth_header = request.headers.get("authorization")
+        api_key_header = request.headers.get("x-api-key")
+
+        if not auth_header and not api_key_header:
+            logger.error("Missing Authorization or x-api-key header")
+            raise HTTPException(
+                status_code=401,
+                detail="Missing Authorization or x-api-key header",
+            )
+
+        # Extract API key from headers
+        api_key = api_key_header
+        if not api_key and auth_header:
+            # Extract from "Bearer <key>" format
+            if auth_header.lower().startswith("bearer "):
+                api_key = auth_header[7:]
+            else:
+                api_key = auth_header
+
+        # Get request body
+        body = await request.body()
+        body_json = json.loads(body)
+
+        # Extract required fields
+        messages = body_json.get("messages", [])
+        model = body_json.get("model", "")
+        system = body_json.get("system")
+        tools = body_json.get("tools")
+
+        try:
+            result = await estimate_cost(
+                messages=messages,
+                model=model,
+                api_key=api_key,
+                system=system,
+                tools=tools,
+            )
+            return result.to_dict()
+        except Exception as e:
+            logger.error(f"Cost estimation failed: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Cost estimation failed: {e}",
+            ) from e
 
     return app
 
