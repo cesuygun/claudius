@@ -430,3 +430,69 @@ class TestStreamingResponses:
             assert response.status_code == 200
             # Check that content contains the streamed data
             assert b"message_start" in response.content
+
+
+class TestStreamingErrorHandling:
+    """Tests for streaming error handling."""
+
+    def test_streaming_connection_error_returns_502(self) -> None:
+        """Test that streaming connection error returns 502 Bad Gateway."""
+        app = create_app()
+        client = TestClient(app)
+
+        with patch("claudius.proxy.httpx.AsyncClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.aclose = AsyncMock()
+
+            # Setup the stream context manager to raise ConnectError on enter
+            mock_stream_cm = MagicMock()
+            mock_stream_cm.__aenter__ = AsyncMock(
+                side_effect=httpx.ConnectError("Connection refused")
+            )
+            mock_stream_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_client.stream.return_value = mock_stream_cm
+
+            response = client.post(
+                "/v1/messages",
+                json={
+                    "model": "claude-3-5-haiku-20241022",
+                    "messages": [],
+                    "stream": True,
+                },
+                headers={"Authorization": "Bearer sk-ant-test123"},
+            )
+
+            assert response.status_code == 502
+            assert "Anthropic API" in response.json()["detail"]
+
+    def test_streaming_timeout_returns_502(self) -> None:
+        """Test that streaming timeout returns 502 Bad Gateway."""
+        app = create_app()
+        client = TestClient(app)
+
+        with patch("claudius.proxy.httpx.AsyncClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.aclose = AsyncMock()
+
+            # Setup the stream context manager to raise TimeoutException on enter
+            mock_stream_cm = MagicMock()
+            mock_stream_cm.__aenter__ = AsyncMock(
+                side_effect=httpx.TimeoutException("Request timed out")
+            )
+            mock_stream_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_client.stream.return_value = mock_stream_cm
+
+            response = client.post(
+                "/v1/messages",
+                json={
+                    "model": "claude-3-5-haiku-20241022",
+                    "messages": [],
+                    "stream": True,
+                },
+                headers={"Authorization": "Bearer sk-ant-test123"},
+            )
+
+            assert response.status_code == 502
+            assert "timed out" in response.json()["detail"].lower()

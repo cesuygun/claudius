@@ -8,6 +8,7 @@ A transparent proxy that sits between Claude clients and the Anthropic API.
 Handles both regular and streaming (SSE) responses.
 """
 
+import json
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -67,7 +68,7 @@ def create_app() -> FastAPI:
 
         # Get request body
         body = await request.body()
-        body_json = await request.json()
+        body_json = json.loads(body)
 
         # Filter and forward headers
         forwarded_headers = _filter_request_headers(request.headers)
@@ -146,32 +147,19 @@ async def _handle_streaming_request(
     url: str, headers: dict[str, str], body: bytes
 ) -> StreamingResponse:
     """Handle a streaming (SSE) request."""
+    client = httpx.AsyncClient()
+
+    # Start the stream connection before returning the response
+    # This allows connection errors to be caught and returned as proper HTTP errors
     try:
-        client = httpx.AsyncClient()
-
-        async def stream_generator() -> AsyncGenerator[bytes, None]:
-            try:
-                async with client.stream(
-                    "POST",
-                    url,
-                    headers=headers,
-                    content=body,
-                    timeout=300.0,
-                ) as response:
-                    logger.debug(f"Streaming response started: {response.status_code}")
-                    async for chunk in response.aiter_bytes():
-                        yield chunk
-            finally:
-                await client.aclose()
-
-        return StreamingResponse(
-            stream_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-            },
+        stream_context = client.stream(
+            "POST",
+            url,
+            headers=headers,
+            content=body,
+            timeout=300.0,
         )
+        response = await stream_context.__aenter__()
     except httpx.ConnectError as e:
         await client.aclose()
         logger.error(f"Failed to connect to Anthropic API: {e}")
@@ -186,6 +174,24 @@ async def _handle_streaming_request(
             status_code=502,
             detail="Request to Anthropic API timed out",
         ) from e
+
+    async def stream_generator() -> AsyncGenerator[bytes, None]:
+        try:
+            logger.debug(f"Streaming response started: {response.status_code}")
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        finally:
+            await stream_context.__aexit__(None, None, None)
+            await client.aclose()
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 def run_server(host: str = "127.0.0.1", port: int = 4000) -> None:
