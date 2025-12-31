@@ -205,10 +205,12 @@ class TestClaudiusREPLChatHandling:
 
     @pytest.fixture
     def repl(self, temp_db: Path) -> ClaudiusREPL:
-        """Create a REPL instance for testing."""
+        """Create a REPL instance for testing with confirmation skipped."""
         tracker = BudgetTracker(db_path=temp_db)
         config = Config()
-        return ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
+        return repl
 
     @pytest.fixture
     def mock_chat_response(self) -> ChatResponse:
@@ -328,10 +330,12 @@ class TestClaudiusREPLEdgeCases:
 
     @pytest.fixture
     def repl(self, temp_db: Path) -> ClaudiusREPL:
-        """Create a REPL instance for testing."""
+        """Create a REPL instance for testing with confirmation skipped."""
         tracker = BudgetTracker(db_path=temp_db)
         config = Config()
-        return ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
+        return repl
 
     @pytest.fixture
     def mock_estimation(self) -> EstimationResult:
@@ -419,10 +423,12 @@ class TestClaudiusREPLCostEstimation:
 
     @pytest.fixture
     def repl(self, temp_db: Path) -> ClaudiusREPL:
-        """Create a REPL instance for testing."""
+        """Create a REPL instance for testing with confirmation skipped."""
         tracker = BudgetTracker(db_path=temp_db)
         config = Config()
-        return ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
+        return repl
 
     @pytest.fixture
     def mock_chat_response(self) -> ChatResponse:
@@ -622,6 +628,7 @@ class TestClaudiusREPLBudgetAlerts:
         )
 
         repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
         repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
@@ -661,6 +668,7 @@ class TestClaudiusREPLBudgetAlerts:
         )
 
         repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
         repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
@@ -692,6 +700,7 @@ class TestClaudiusREPLBudgetAlerts:
         config.budget.daily_soft = 100.0
 
         repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
         repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
@@ -743,6 +752,7 @@ class TestClaudiusREPLBudgetAlerts:
         # Monthly spent is also 88.0 (88% of monthly)
 
         repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
         repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
@@ -818,6 +828,7 @@ class TestClaudiusREPLDailyHardLimit:
         )
 
         repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
         repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
@@ -847,6 +858,7 @@ class TestClaudiusREPLDailyHardLimit:
         )
 
         repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
         repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
@@ -884,6 +896,7 @@ class TestClaudiusREPLDailyHardLimit:
         )
 
         repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
         # User explicitly requests opus with /opus command
         repl.session.prompt_async = AsyncMock(side_effect=["/opus", "Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
@@ -914,6 +927,7 @@ class TestClaudiusREPLDailyHardLimit:
         )
 
         repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
         # User explicitly requests opus
         repl.session.prompt_async = AsyncMock(side_effect=["/opus", "Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
@@ -954,6 +968,7 @@ class TestClaudiusREPLDailyHardLimit:
         )
 
         repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True  # Skip confirmation dialog in tests
         repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
@@ -973,3 +988,206 @@ class TestClaudiusREPLDailyHardLimit:
         all_output = "".join(printed_outputs)
         # Should not see hard limit warning
         assert "hard limit" not in all_output.lower()
+
+
+class TestClaudiusREPLConfirmationDialog:
+    """Tests for REPL interactive confirmation dialog."""
+
+    @pytest.fixture
+    def temp_db(self) -> Path:
+        """Create a temporary database file."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            return Path(f.name)
+
+    @pytest.fixture
+    def mock_chat_response(self) -> ChatResponse:
+        """Create a mock chat response."""
+        return ChatResponse(
+            model="haiku",
+            text="Hello! How can I help you?",
+            input_tokens=100,
+            output_tokens=50,
+            cost=0.005,
+        )
+
+    @pytest.fixture
+    def mock_estimation(self) -> EstimationResult:
+        """Create a mock estimation result."""
+        return EstimationResult(
+            input_tokens=100,
+            output_tokens_min=50,
+            output_tokens_max=200,
+            cost_min=0.01,
+            cost_max=0.05,
+            model="claude-3-5-haiku-20241022",
+            input_cost=0.005,
+            output_cost_min=0.005,
+            output_cost_max=0.045,
+        )
+
+    async def test_confirmation_dialog_send_proceeds(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that 'Send' action in confirmation dialog sends the message."""
+        from claudius.repl import ConfirmationResult
+
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+
+        # Mock the confirmation dialog to return "send"
+        mock_confirmation = AsyncMock(
+            return_value=ConfirmationResult(action="send")
+        )
+        repl._show_confirmation_dialog = mock_confirmation
+
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+        # Message should be sent
+        repl.chat_client.send_message.assert_called_once()
+        # Confirmation dialog should be called
+        mock_confirmation.assert_called_once()
+
+    async def test_confirmation_dialog_cancel_returns_to_prompt(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that 'Cancel' action in confirmation dialog returns to input without sending."""
+        from claudius.repl import ConfirmationResult
+
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+
+        # Mock the confirmation dialog to return "cancel"
+        mock_confirmation = AsyncMock(
+            return_value=ConfirmationResult(action="cancel")
+        )
+        repl._show_confirmation_dialog = mock_confirmation
+
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+        # Message should NOT be sent when cancelled
+        repl.chat_client.send_message.assert_not_called()
+        # Confirmation dialog should still be called
+        mock_confirmation.assert_called_once()
+
+    async def test_confirmation_dialog_change_model_updates_model(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that 'Change Model' action updates the model and re-estimates."""
+        from claudius.repl import ConfirmationResult
+
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+
+        # First call returns "change" with opus, second call returns "send"
+        mock_confirmation = AsyncMock(
+            side_effect=[
+                ConfirmationResult(action="change", model="opus"),
+                ConfirmationResult(action="send"),
+            ]
+        )
+        repl._show_confirmation_dialog = mock_confirmation
+
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+        # estimate_cost should be called twice - once for initial haiku, once for opus
+        assert mock_estimate.call_count == 2
+        # Second call should use opus model
+        second_call_kwargs = mock_estimate.call_args_list[1][1]
+        assert "opus" in second_call_kwargs["model"].lower()
+
+        # Message should be sent with opus model override
+        repl.chat_client.send_message.assert_called_once()
+        call_kwargs = repl.chat_client.send_message.call_args[1]
+        assert call_kwargs.get("model_override") == "opus"
+
+    async def test_skip_confirmation_flag_bypasses_dialog(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that skip_confirmation=True bypasses the confirmation dialog."""
+        from claudius.repl import ConfirmationResult
+
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.skip_confirmation = True
+
+        # Set up mock that should NOT be called
+        mock_confirmation = AsyncMock(
+            return_value=ConfirmationResult(action="send")
+        )
+        repl._show_confirmation_dialog = mock_confirmation
+
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+        # Message should be sent
+        repl.chat_client.send_message.assert_called_once()
+        # Confirmation dialog should NOT be called when skip_confirmation=True
+        mock_confirmation.assert_not_called()
+
+    async def test_confirmation_result_dataclass(self) -> None:
+        """Test ConfirmationResult dataclass creation and fields."""
+        from claudius.repl import ConfirmationResult
+
+        # Test send action
+        send_result = ConfirmationResult(action="send")
+        assert send_result.action == "send"
+        assert send_result.model is None
+
+        # Test cancel action
+        cancel_result = ConfirmationResult(action="cancel")
+        assert cancel_result.action == "cancel"
+        assert cancel_result.model is None
+
+        # Test change action with model
+        change_result = ConfirmationResult(action="change", model="opus")
+        assert change_result.action == "change"
+        assert change_result.model == "opus"
+
+    async def test_model_override_cleared_on_cancel(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that model override is cleared when user cancels."""
+        from claudius.repl import ConfirmationResult
+
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+
+        # Set model override via /opus command, then cancel at confirmation
+        mock_confirmation = AsyncMock(
+            return_value=ConfirmationResult(action="cancel")
+        )
+        repl._show_confirmation_dialog = mock_confirmation
+
+        repl.session.prompt_async = AsyncMock(side_effect=["/opus", "Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+        # Model override should be cleared after cancel
+        assert repl.command_handler.current_model_override is None

@@ -10,19 +10,23 @@ Main entry point for interactive chat with Claude API, featuring:
 - Slash command handling
 - Streaming chat responses
 - History support
+- Interactive confirmation before sending
 """
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.shortcuts import button_dialog, radiolist_dialog
 from rich.console import Console
 
 from claudius.budget import BudgetTracker
 from claudius.chat import ChatClient, ChatError
 from claudius.commands import CommandHandler
 from claudius.config import Config
-from claudius.estimation import estimate_cost
+from claudius.estimation import EstimationResult, estimate_cost
 from claudius.ui import (
     render_banner,
     render_budget_alert,
@@ -31,6 +35,14 @@ from claudius.ui import (
     render_cost_line,
     render_response,
 )
+
+
+@dataclass
+class ConfirmationResult:
+    """Result of the send confirmation dialog."""
+
+    action: Literal["send", "change", "cancel"]
+    model: str | None = None  # New model if action is "change"
 
 
 class ClaudiusREPL:
@@ -61,6 +73,74 @@ class ClaudiusREPL:
         self.session: PromptSession[str] = PromptSession(
             history=FileHistory(str(history_path))
         )
+
+        # Flag to control whether to show confirmation dialog
+        self.skip_confirmation = False
+
+    async def _show_confirmation_dialog(
+        self,
+        estimation: EstimationResult,
+        model: str,
+        currency: str,
+    ) -> ConfirmationResult:
+        """Show interactive confirmation dialog before sending message.
+
+        Args:
+            estimation: Cost estimation result
+            model: Currently selected model
+            currency: Currency code for display
+
+        Returns:
+            ConfirmationResult with action and optional new model
+        """
+        from claudius.ui import get_currency_symbol
+
+        symbol = get_currency_symbol(currency)
+        total_min = estimation.input_cost + estimation.output_cost_min
+        total_max = estimation.input_cost + estimation.output_cost_max
+
+        # Format the cost estimate text for the dialog
+        cost_text = (
+            f"Estimated cost: {symbol}{total_min:.4f} - {symbol}{total_max:.4f}\n"
+            f"Input: {symbol}{estimation.input_cost:.4f} (exact) | "
+            f"Output: {symbol}{estimation.output_cost_min:.4f}-{symbol}{estimation.output_cost_max:.4f} (est)\n"
+            f"Model: {model.title()}"
+        )
+
+        # Show the confirmation dialog using async version
+        result = await button_dialog(
+            title="Confirm Send",
+            text=cost_text,
+            buttons=[
+                ("Send", "send"),
+                ("Change Model", "change"),
+                ("Cancel", "cancel"),
+            ],
+        ).run_async()
+
+        if result == "change":
+            # Show model selection dialog using async version
+            new_model = await radiolist_dialog(
+                title="Select Model",
+                text="Choose a model for this message:",
+                values=[
+                    ("haiku", "Haiku (cheapest)"),
+                    ("sonnet", "Sonnet (balanced)"),
+                    ("opus", "Opus (most capable)"),
+                ],
+                default=model,
+            ).run_async()
+
+            if new_model is None:
+                # User cancelled model selection, treat as cancel
+                return ConfirmationResult(action="cancel")
+
+            return ConfirmationResult(action="change", model=new_model)
+
+        # Validate result and return appropriate action
+        if result == "send":
+            return ConfirmationResult(action="send")
+        return ConfirmationResult(action="cancel")
 
     async def run(self) -> None:
         """Run the REPL loop."""
@@ -126,23 +206,57 @@ class ClaudiusREPL:
                         {"role": "user", "content": user_input}
                     )
 
-                    # Estimate cost and show to user
-                    estimation = await estimate_cost(
-                        messages=messages_for_estimation,
-                        model=model_id,
-                        api_key=self.api_key,
-                    )
-
-                    # Show cost estimate before sending
-                    self.console.print(
-                        render_cost_estimate(
-                            input_cost=estimation.input_cost,
-                            output_cost_min=estimation.output_cost_min,
-                            output_cost_max=estimation.output_cost_max,
-                            model=target_model,
-                            currency=self.config.budget.currency,
+                    # Confirmation loop - allows model change and re-estimation
+                    should_send = False
+                    while not should_send:
+                        # Estimate cost for current model
+                        estimation = await estimate_cost(
+                            messages=messages_for_estimation,
+                            model=model_id,
+                            api_key=self.api_key,
                         )
-                    )
+
+                        # Show cost estimate before sending
+                        self.console.print(
+                            render_cost_estimate(
+                                input_cost=estimation.input_cost,
+                                output_cost_min=estimation.output_cost_min,
+                                output_cost_max=estimation.output_cost_max,
+                                model=target_model,
+                                currency=self.config.budget.currency,
+                            )
+                        )
+
+                        # Show confirmation dialog unless skipped
+                        if self.skip_confirmation:
+                            should_send = True
+                        else:
+                            confirmation = await self._show_confirmation_dialog(
+                                estimation=estimation,
+                                model=target_model,
+                                currency=self.config.budget.currency,
+                            )
+
+                            if confirmation.action == "send":
+                                should_send = True
+                            elif confirmation.action == "cancel":
+                                # Break out and continue to next input
+                                break
+                            elif confirmation.action == "change" and confirmation.model:
+                                # Update model and re-estimate
+                                target_model = confirmation.model
+                                model_id = self.chat_client.MODEL_IDS.get(
+                                    target_model, self.chat_client.MODEL_IDS["sonnet"]
+                                )
+                                # Update the override to use the new model
+                                self.command_handler.current_model_override = target_model
+                                # Loop back to re-estimate with new model
+
+                    # Skip sending if user cancelled
+                    if not should_send:
+                        # Clear model override on cancel
+                        self.command_handler.current_model_override = None
+                        continue
 
                     response = await self.chat_client.send_message(
                         user_input,
