@@ -28,6 +28,7 @@ from claudius.commands import CommandHandler
 from claudius.config import Config
 from claudius.estimation import EstimationResult, estimate_cost
 from claudius.ui import (
+    get_currency_symbol,
     render_banner,
     render_budget_alert,
     render_budget_bars,
@@ -93,8 +94,6 @@ class ClaudiusREPL:
         Returns:
             ConfirmationResult with action and optional new model
         """
-        from claudius.ui import get_currency_symbol
-
         symbol = get_currency_symbol(currency)
         total_min = estimation.input_cost + estimation.output_cost_min
         total_max = estimation.input_cost + estimation.output_cost_max
