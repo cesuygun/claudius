@@ -22,7 +22,14 @@ from claudius.budget import BudgetTracker
 from claudius.chat import ChatClient, ChatError
 from claudius.commands import CommandHandler
 from claudius.config import Config
-from claudius.ui import render_banner, render_budget_bars, render_cost_line, render_response
+from claudius.estimation import estimate_cost
+from claudius.ui import (
+    render_banner,
+    render_budget_bars,
+    render_cost_estimate,
+    render_cost_line,
+    render_response,
+)
 
 
 class ClaudiusREPL:
@@ -38,6 +45,7 @@ class ClaudiusREPL:
         """
         self.tracker = tracker
         self.config = config
+        self.api_key = api_key
         self.console = Console()
 
         # Build proxy URL from config
@@ -81,6 +89,42 @@ class ClaudiusREPL:
 
                 # It's a chat message - send to Claude
                 try:
+                    # Get routing decision to determine model
+                    if self.command_handler.current_model_override:
+                        target_model = self.command_handler.current_model_override
+                    else:
+                        decision = self.chat_client.router.classify(user_input)
+                        target_model = decision.model
+
+                    # Map short model name to full model ID
+                    model_id = self.chat_client.MODEL_IDS.get(
+                        target_model, self.chat_client.MODEL_IDS["sonnet"]
+                    )
+
+                    # Build messages for estimation (include conversation history)
+                    messages_for_estimation = list(self.chat_client.conversation)
+                    messages_for_estimation.append(
+                        {"role": "user", "content": user_input}
+                    )
+
+                    # Estimate cost and show to user
+                    estimation = await estimate_cost(
+                        messages=messages_for_estimation,
+                        model=model_id,
+                        api_key=self.api_key,
+                    )
+
+                    # Show cost estimate before sending
+                    self.console.print(
+                        render_cost_estimate(
+                            input_cost=estimation.input_cost,
+                            output_cost_min=estimation.output_cost_min,
+                            output_cost_max=estimation.output_cost_max,
+                            model=target_model,
+                            currency=self.config.budget.currency,
+                        )
+                    )
+
                     response = await self.chat_client.send_message(
                         user_input,
                         model_override=self.command_handler.current_model_override,

@@ -45,6 +45,9 @@ class EstimationResult:
     cost_min: float  # EUR - cost with minimum output
     cost_max: float  # EUR - cost with maximum output
     model: str  # Model name used for estimation
+    input_cost: float = 0.0  # EUR - exact input cost
+    output_cost_min: float = 0.0  # EUR - minimum output cost
+    output_cost_max: float = 0.0  # EUR - maximum output cost
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -55,6 +58,9 @@ class EstimationResult:
             "cost_min": self.cost_min,
             "cost_max": self.cost_max,
             "model": self.model,
+            "input_cost": self.input_cost,
+            "output_cost_min": self.output_cost_min,
+            "output_cost_max": self.output_cost_max,
         }
 
 
@@ -156,9 +162,14 @@ async def estimate_cost(
     # Estimate output token range
     output_min, output_max = estimate_output_tokens(input_tokens, model)
 
-    # Calculate cost range
-    cost_min = calculate_cost(model, input_tokens, output_min)
-    cost_max = calculate_cost(model, input_tokens, output_max)
+    # Calculate individual cost components
+    input_cost = calculate_cost(model, input_tokens, 0)
+    output_cost_min = calculate_cost(model, 0, output_min)
+    output_cost_max = calculate_cost(model, 0, output_max)
+
+    # Calculate total cost range
+    cost_min = input_cost + output_cost_min
+    cost_max = input_cost + output_cost_max
 
     return EstimationResult(
         input_tokens=input_tokens,
@@ -167,4 +178,7 @@ async def estimate_cost(
         cost_min=cost_min,
         cost_max=cost_max,
         model=model,
+        input_cost=input_cost,
+        output_cost_min=output_cost_min,
+        output_cost_max=output_cost_max,
     )

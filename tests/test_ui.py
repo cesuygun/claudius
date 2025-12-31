@@ -16,6 +16,7 @@ from claudius.ui import (
     get_currency_symbol,
     render_banner,
     render_budget_bars,
+    render_cost_estimate,
     render_cost_line,
     render_response,
     render_status,
@@ -287,6 +288,148 @@ class TestRenderResponse:
             output = capture.get()
 
             assert model in output
+
+
+class TestRenderCostEstimate:
+    """Tests for render_cost_estimate function."""
+
+    def test_cost_estimate_shows_total_range(self) -> None:
+        """Test that cost estimate shows total cost range."""
+        result = render_cost_estimate(
+            input_cost=0.01,
+            output_cost_min=0.02,
+            output_cost_max=0.05,
+            model="haiku",
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        # Total should be 0.03 - 0.06
+        assert "0.0300" in output
+        assert "0.0600" in output
+
+    def test_cost_estimate_shows_input_cost(self) -> None:
+        """Test that cost estimate shows input cost with (exact) label."""
+        result = render_cost_estimate(
+            input_cost=0.01,
+            output_cost_min=0.02,
+            output_cost_max=0.05,
+            model="sonnet",
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "Input" in output
+        assert "0.0100" in output
+        assert "(exact)" in output
+
+    def test_cost_estimate_shows_output_cost_range(self) -> None:
+        """Test that cost estimate shows output cost range with (est) label."""
+        result = render_cost_estimate(
+            input_cost=0.01,
+            output_cost_min=0.02,
+            output_cost_max=0.05,
+            model="opus",
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "Output" in output
+        assert "0.0200" in output
+        assert "0.0500" in output
+        assert "(est)" in output
+
+    def test_cost_estimate_shows_model_name(self) -> None:
+        """Test that cost estimate shows the model name."""
+        result = render_cost_estimate(
+            input_cost=0.01,
+            output_cost_min=0.02,
+            output_cost_max=0.05,
+            model="haiku",
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "Model" in output
+        assert "Haiku" in output  # Title case
+
+    def test_cost_estimate_uses_currency_symbol(self) -> None:
+        """Test that cost estimate uses correct currency symbol."""
+        result = render_cost_estimate(
+            input_cost=0.01,
+            output_cost_min=0.02,
+            output_cost_max=0.05,
+            model="sonnet",
+            currency="USD",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "$" in output
+
+    def test_cost_estimate_eur_currency(self) -> None:
+        """Test that cost estimate shows EUR correctly."""
+        result = render_cost_estimate(
+            input_cost=0.01,
+            output_cost_min=0.02,
+            output_cost_max=0.05,
+            model="sonnet",
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        # EUR should show Euro symbol
+        assert "EUR" in output or "\u20ac" in output
+
+    def test_cost_estimate_shows_estimated_cost_label(self) -> None:
+        """Test that cost estimate shows 'Estimated cost' label."""
+        result = render_cost_estimate(
+            input_cost=0.01,
+            output_cost_min=0.02,
+            output_cost_max=0.05,
+            model="haiku",
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "Estimated cost" in output
+
+    def test_cost_estimate_with_different_models(self) -> None:
+        """Test that cost estimate works with different model names."""
+        for model in ["haiku", "sonnet", "opus"]:
+            result = render_cost_estimate(
+                input_cost=0.01,
+                output_cost_min=0.02,
+                output_cost_max=0.05,
+                model=model,
+                currency="EUR",
+            )
+            console = Console(force_terminal=True, width=100)
+            with console.capture() as capture:
+                console.print(result)
+            output = capture.get()
+
+            assert model.title() in output
 
 
 class TestRenderCostLine:

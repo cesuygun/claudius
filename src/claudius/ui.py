@@ -210,6 +210,49 @@ def render_response(model: str, text: str) -> RenderableType:
     return response
 
 
+def render_cost_estimate(
+    input_cost: float,
+    output_cost_min: float,
+    output_cost_max: float,
+    model: str,
+    currency: str,
+) -> RenderableType:
+    """Render pre-flight cost estimation before sending a message.
+
+    Shows the estimated cost range based on exact input tokens and estimated
+    output tokens, along with the model that will be used.
+
+    Args:
+        input_cost: Exact cost for input tokens
+        output_cost_min: Minimum estimated cost for output tokens
+        output_cost_max: Maximum estimated cost for output tokens
+        model: Model name (short form like "haiku", "sonnet", "opus")
+        currency: Currency code for symbol lookup
+
+    Returns:
+        Rich Text renderable with formatted cost estimation
+    """
+    symbol = get_currency_symbol(currency)
+    total_min = input_cost + output_cost_min
+    total_max = input_cost + output_cost_max
+
+    text = Text()
+    text.append("\n")
+    text.append("   Estimated cost: ", style="dim")
+    text.append(f"{symbol}{total_min:.4f} - {symbol}{total_max:.4f}", style="cyan bold")
+    text.append("\n   Input: ", style="dim")
+    text.append(f"{symbol}{input_cost:.4f}", style="green")
+    text.append(" (exact)", style="dim")
+    text.append(" | Output: ", style="dim")
+    text.append(f"{symbol}{output_cost_min:.4f}-{symbol}{output_cost_max:.4f}", style="yellow")
+    text.append(" (est)", style="dim")
+    text.append("\n   Model: ", style="dim")
+    text.append(f"{model.title()}", style="cyan")
+    text.append("\n")
+
+    return text
+
+
 def render_cost_line(tracker: BudgetTracker, config: Config) -> RenderableType:
     """Render compact cost update line after each response.
 

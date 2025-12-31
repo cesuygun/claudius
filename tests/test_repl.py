@@ -13,6 +13,7 @@ from rich.console import Console
 from claudius.budget import BudgetTracker
 from claudius.chat import ChatResponse
 from claudius.config import Config
+from claudius.estimation import EstimationResult
 from claudius.repl import ClaudiusREPL
 
 
@@ -220,45 +221,66 @@ class TestClaudiusREPLChatHandling:
             cost=0.005,
         )
 
+    @pytest.fixture
+    def mock_estimation(self) -> EstimationResult:
+        """Create a mock estimation result."""
+        return EstimationResult(
+            input_tokens=100,
+            output_tokens_min=50,
+            output_tokens_max=200,
+            cost_min=0.01,
+            cost_max=0.05,
+            model="claude-3-5-haiku-20241022",
+            input_cost=0.005,
+            output_cost_min=0.005,
+            output_cost_max=0.045,
+        )
+
     async def test_chat_message_is_sent_to_client(
-        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse
+        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
     ) -> None:
         """Test that non-command messages are sent to chat client."""
         repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
-        await repl.run()
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
 
         repl.chat_client.send_message.assert_called_once()
 
     async def test_chat_response_is_displayed(
-        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse
+        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
     ) -> None:
         """Test that chat response is displayed."""
         repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
-        with patch.object(repl.console, "print") as mock_print:
-            await repl.run()
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            with patch.object(repl.console, "print") as mock_print:
+                await repl.run()
 
-            # Should print banner, budget bars, response, and cost line
-            assert mock_print.call_count >= 4
+                # Should print banner, budget bars, cost estimate, response, and cost line
+                assert mock_print.call_count >= 5
 
     async def test_model_override_is_passed_to_chat_client(
-        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse
+        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
     ) -> None:
         """Test that model override is passed to chat client."""
         repl.session.prompt_async = AsyncMock(side_effect=["/opus", "Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
-        await repl.run()
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
 
         # Verify send_message was called with model_override="opus"
         call_kwargs = repl.chat_client.send_message.call_args[1]
         assert call_kwargs.get("model_override") == "opus"
 
     async def test_model_override_is_cleared_after_use(
-        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse
+        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
     ) -> None:
         """Test that model override is cleared after chat message."""
         repl.session.prompt_async = AsyncMock(
@@ -266,7 +288,9 @@ class TestClaudiusREPLChatHandling:
         )
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
-        await repl.run()
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
 
         # Second call should have no model override
         calls = repl.chat_client.send_message.call_args_list
@@ -277,18 +301,20 @@ class TestClaudiusREPLChatHandling:
         assert calls[1][1].get("model_override") is None
 
     async def test_cost_is_recorded_in_tracker(
-        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse
+        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
     ) -> None:
         """Test that cost is recorded in budget tracker after chat."""
         repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
         repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
 
-        with patch.object(repl.tracker, "record_usage") as mock_record:
-            await repl.run()
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            with patch.object(repl.tracker, "record_usage") as mock_record:
+                await repl.run()
 
-            mock_record.assert_called_once()
-            call_kwargs = mock_record.call_args[1]
-            assert call_kwargs["cost"] == mock_chat_response.cost
+                mock_record.assert_called_once()
+                call_kwargs = mock_record.call_args[1]
+                assert call_kwargs["cost"] == mock_chat_response.cost
 
 
 class TestClaudiusREPLEdgeCases:
@@ -306,6 +332,21 @@ class TestClaudiusREPLEdgeCases:
         tracker = BudgetTracker(db_path=temp_db)
         config = Config()
         return ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+
+    @pytest.fixture
+    def mock_estimation(self) -> EstimationResult:
+        """Create a mock estimation result."""
+        return EstimationResult(
+            input_tokens=100,
+            output_tokens_min=50,
+            output_tokens_max=200,
+            cost_min=0.01,
+            cost_max=0.05,
+            model="claude-3-5-haiku-20241022",
+            input_cost=0.005,
+            output_cost_min=0.005,
+            output_cost_max=0.045,
+        )
 
     async def test_empty_input_is_skipped(self, repl: ClaudiusREPL) -> None:
         """Test that empty input is skipped."""
@@ -327,7 +368,9 @@ class TestClaudiusREPLEdgeCases:
         # Chat client should not be called for whitespace-only input
         repl.chat_client.send_message.assert_not_called()
 
-    async def test_chat_error_is_handled_gracefully(self, repl: ClaudiusREPL) -> None:
+    async def test_chat_error_is_handled_gracefully(
+        self, repl: ClaudiusREPL, mock_estimation: EstimationResult
+    ) -> None:
         """Test that chat errors are handled gracefully."""
         from claudius.chat import ChatError
 
@@ -336,9 +379,11 @@ class TestClaudiusREPLEdgeCases:
             side_effect=ChatError("Connection refused")
         )
 
-        with patch.object(repl.console, "print"):
-            await repl.run()
-            # Should print error message but not crash - just verify it completed
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            with patch.object(repl.console, "print"):
+                await repl.run()
+                # Should print error message but not crash - just verify it completed
 
 
 class TestClaudiusREPLHistory:
@@ -361,3 +406,162 @@ class TestClaudiusREPLHistory:
         from prompt_toolkit.history import FileHistory
 
         assert isinstance(repl.session.history, FileHistory)
+
+
+class TestClaudiusREPLCostEstimation:
+    """Tests for REPL cost estimation display."""
+
+    @pytest.fixture
+    def temp_db(self) -> Path:
+        """Create a temporary database file."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            return Path(f.name)
+
+    @pytest.fixture
+    def repl(self, temp_db: Path) -> ClaudiusREPL:
+        """Create a REPL instance for testing."""
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        return ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+
+    @pytest.fixture
+    def mock_chat_response(self) -> ChatResponse:
+        """Create a mock chat response."""
+        return ChatResponse(
+            model="haiku",
+            text="Hello! How can I help you?",
+            input_tokens=100,
+            output_tokens=50,
+            cost=0.005,
+        )
+
+    @pytest.fixture
+    def mock_estimation(self) -> EstimationResult:
+        """Create a mock estimation result."""
+        return EstimationResult(
+            input_tokens=100,
+            output_tokens_min=50,
+            output_tokens_max=200,
+            cost_min=0.01,
+            cost_max=0.05,
+            model="claude-3-5-haiku-20241022",
+            input_cost=0.005,
+            output_cost_min=0.005,
+            output_cost_max=0.045,
+        )
+
+    async def test_cost_estimation_is_called_before_send(
+        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that cost estimation is called before sending message."""
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+            # estimate_cost should be called once for "Hello" message
+            mock_estimate.assert_called_once()
+
+    async def test_cost_estimation_shows_output(
+        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that cost estimation output is printed to console."""
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+
+            with patch.object(repl.console, "print") as mock_print:
+                await repl.run()
+
+                # Should print: banner, budget bars, cost estimate, response, cost line
+                assert mock_print.call_count >= 5
+
+    async def test_cost_estimation_uses_correct_model(
+        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that cost estimation uses the routed model."""
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+            # Check that estimate_cost was called with the correct model
+            call_kwargs = mock_estimate.call_args[1]
+            # Short message "Hello" routes to haiku
+            assert "haiku" in call_kwargs["model"].lower()
+
+    async def test_cost_estimation_with_model_override(
+        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that cost estimation respects model override."""
+        repl.session.prompt_async = AsyncMock(side_effect=["/opus", "Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+            # Check that estimate_cost was called with opus model
+            call_kwargs = mock_estimate.call_args[1]
+            assert "opus" in call_kwargs["model"].lower()
+
+    async def test_cost_estimation_includes_conversation_history(
+        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that cost estimation includes conversation history."""
+        repl.session.prompt_async = AsyncMock(
+            side_effect=["First message", "Second message", "/quit"]
+        )
+
+        # Create a side effect that updates conversation history like the real implementation
+        async def send_with_history(message: str, **kwargs):  # noqa: ANN003, ARG001
+            repl.chat_client.conversation.append({"role": "user", "content": message})
+            repl.chat_client.conversation.append(
+                {"role": "assistant", "content": mock_chat_response.text}
+            )
+            return mock_chat_response
+
+        repl.chat_client.send_message = AsyncMock(side_effect=send_with_history)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+            # Second call should include first message in history
+            calls = mock_estimate.call_args_list
+            assert len(calls) == 2
+
+            # Second call messages should be longer (includes history)
+            second_call_messages = calls[1][1]["messages"]
+            # Should have: user (first), assistant (response), user (second)
+            assert len(second_call_messages) == 3
+
+    async def test_cost_estimation_uses_api_key(
+        self, repl: ClaudiusREPL, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that cost estimation uses the API key."""
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+            # Check that estimate_cost was called with the API key
+            call_kwargs = mock_estimate.call_args[1]
+            assert call_kwargs["api_key"] == "sk-ant-test123"
+
+    async def test_repl_stores_api_key(self, temp_db: Path) -> None:
+        """Test that REPL stores the API key for estimation."""
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+
+        assert repl.api_key == "sk-ant-test123"
