@@ -320,6 +320,6 @@ class ClaudiusREPL:
                 self.command_handler.current_model_override = None
 
             except KeyboardInterrupt:
-                continue  # Ctrl+C cancels current input
+                break  # Ctrl+C exits
             except EOFError:
                 break  # Ctrl+D exits
