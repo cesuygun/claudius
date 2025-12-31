@@ -90,9 +90,27 @@ class ClaudiusREPL:
 
                 # It's a chat message - send to Claude
                 try:
+                    # Check daily hard limit before sending
+                    hard_limit_exceeded = self.tracker.is_daily_hard_limit_exceeded(
+                        self.config.budget.daily_hard
+                    )
+
                     # Get routing decision to determine model
                     if self.command_handler.current_model_override:
                         target_model = self.command_handler.current_model_override
+                        # Warn user if overriding despite hard limit
+                        if hard_limit_exceeded and target_model != "haiku":
+                            self.console.print(
+                                f"[yellow]Daily hard limit exceeded but using {target_model} as requested[/yellow]"
+                            )
+                    elif hard_limit_exceeded:
+                        # Force haiku when hard limit exceeded and no override
+                        target_model = "haiku"
+                        self.console.print(
+                            "[yellow]Daily hard limit reached - using Haiku only[/yellow]"
+                        )
+                        # Set override to enforce haiku
+                        self.command_handler.current_model_override = "haiku"
                     else:
                         decision = self.chat_client.router.classify(user_input)
                         target_model = decision.model

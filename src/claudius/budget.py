@@ -174,6 +174,18 @@ class BudgetTracker:
         max_rollover = monthly_budget * max_rollover_percent
         return min(unused, max_rollover)
 
+    def is_daily_hard_limit_exceeded(self, daily_hard: float) -> bool:
+        """Check if daily hard limit has been exceeded.
+
+        Args:
+            daily_hard: The daily hard limit amount
+
+        Returns:
+            True if daily spending is at or above the hard limit
+        """
+        today_spent = self.get_daily_spent()
+        return today_spent >= daily_hard
+
     def get_status(self, monthly_budget: float, daily_budget: float) -> BudgetStatus:
         """Get current budget status."""
         now = datetime.now()

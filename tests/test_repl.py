@@ -763,3 +763,213 @@ class TestClaudiusREPLBudgetAlerts:
         all_output = "".join(printed_outputs)
         assert "Daily budget" in all_output
         assert "Monthly budget" in all_output
+
+
+class TestClaudiusREPLDailyHardLimit:
+    """Tests for REPL daily hard limit enforcement."""
+
+    @pytest.fixture
+    def temp_db(self) -> Path:
+        """Create a temporary database file."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            return Path(f.name)
+
+    @pytest.fixture
+    def mock_chat_response(self) -> ChatResponse:
+        """Create a mock chat response."""
+        return ChatResponse(
+            model="haiku",
+            text="Hello! How can I help you?",
+            input_tokens=100,
+            output_tokens=50,
+            cost=0.005,
+        )
+
+    @pytest.fixture
+    def mock_estimation(self) -> EstimationResult:
+        """Create a mock estimation result."""
+        return EstimationResult(
+            input_tokens=100,
+            output_tokens_min=50,
+            output_tokens_max=200,
+            cost_min=0.01,
+            cost_max=0.05,
+            model="claude-3-5-haiku-20241022",
+            input_cost=0.005,
+            output_cost_min=0.005,
+            output_cost_max=0.045,
+        )
+
+    async def test_hard_limit_forces_haiku_model(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that exceeding daily hard limit forces Haiku model."""
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        config.budget.daily_hard = 10.0
+
+        # Pre-record spending to exceed hard limit
+        tracker.record_usage(
+            model="sonnet",
+            input_tokens=1000,
+            output_tokens=1000,
+            cost=15.0,
+            routed_by="test",
+        )
+
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+        # Verify send_message was called with haiku model override
+        call_kwargs = repl.chat_client.send_message.call_args[1]
+        assert call_kwargs.get("model_override") == "haiku"
+
+    async def test_hard_limit_shows_warning_message(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that exceeding daily hard limit shows a warning message."""
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        config.budget.daily_hard = 10.0
+
+        # Pre-record spending to exceed hard limit
+        tracker.record_usage(
+            model="sonnet",
+            input_tokens=1000,
+            output_tokens=1000,
+            cost=15.0,
+            routed_by="test",
+        )
+
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        printed_outputs: list[str] = []
+
+        def capture_print(renderable: object) -> None:
+            console = Console(force_terminal=True, width=100)
+            with console.capture() as capture:
+                console.print(renderable)
+            printed_outputs.append(capture.get())
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            with patch.object(repl.console, "print", side_effect=capture_print):
+                await repl.run()
+
+        all_output = "".join(printed_outputs)
+        assert "Daily hard limit reached" in all_output or "hard limit" in all_output.lower()
+
+    async def test_hard_limit_allows_manual_override(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that user can manually override to expensive model despite hard limit."""
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        config.budget.daily_hard = 10.0
+
+        # Pre-record spending to exceed hard limit
+        tracker.record_usage(
+            model="sonnet",
+            input_tokens=1000,
+            output_tokens=1000,
+            cost=15.0,
+            routed_by="test",
+        )
+
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        # User explicitly requests opus with /opus command
+        repl.session.prompt_async = AsyncMock(side_effect=["/opus", "Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            await repl.run()
+
+        # User override should be respected
+        call_kwargs = repl.chat_client.send_message.call_args[1]
+        assert call_kwargs.get("model_override") == "opus"
+
+    async def test_hard_limit_override_shows_warning(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that overriding hard limit with expensive model shows warning."""
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        config.budget.daily_hard = 10.0
+
+        # Pre-record spending to exceed hard limit
+        tracker.record_usage(
+            model="sonnet",
+            input_tokens=1000,
+            output_tokens=1000,
+            cost=15.0,
+            routed_by="test",
+        )
+
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        # User explicitly requests opus
+        repl.session.prompt_async = AsyncMock(side_effect=["/opus", "Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        printed_outputs: list[str] = []
+
+        def capture_print(renderable: object) -> None:
+            console = Console(force_terminal=True, width=100)
+            with console.capture() as capture:
+                console.print(renderable)
+            printed_outputs.append(capture.get())
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            with patch.object(repl.console, "print", side_effect=capture_print):
+                await repl.run()
+
+        all_output = "".join(printed_outputs)
+        # Should warn that user is overriding despite hard limit
+        assert "hard limit" in all_output.lower()
+        assert "opus" in all_output.lower()
+
+    async def test_no_hard_limit_enforcement_when_under_limit(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that no hard limit enforcement happens when under the limit."""
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        config.budget.daily_hard = 10.0
+
+        # Small spending - under the limit
+        tracker.record_usage(
+            model="haiku",
+            input_tokens=100,
+            output_tokens=100,
+            cost=0.50,
+            routed_by="test",
+        )
+
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        printed_outputs: list[str] = []
+
+        def capture_print(renderable: object) -> None:
+            console = Console(force_terminal=True, width=100)
+            with console.capture() as capture:
+                console.print(renderable)
+            printed_outputs.append(capture.get())
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            with patch.object(repl.console, "print", side_effect=capture_print):
+                await repl.run()
+
+        all_output = "".join(printed_outputs)
+        # Should not see hard limit warning
+        assert "hard limit" not in all_output.lower()

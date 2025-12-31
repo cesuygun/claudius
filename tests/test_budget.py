@@ -173,3 +173,61 @@ class TestRolloverCalculation:
 
         status = tracker.get_status(monthly_budget=90.0, daily_budget=5.0)
         assert status.rollover == 0.0
+
+
+class TestDailyHardLimit:
+    """Tests for daily hard limit detection."""
+
+    @pytest.fixture
+    def tracker(self) -> BudgetTracker:
+        """Create a budget tracker with temporary database."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            return BudgetTracker(db_path=Path(f.name))
+
+    def test_daily_hard_limit_exceeded_returns_true_when_over_limit(
+        self, tracker: BudgetTracker
+    ) -> None:
+        """Test that is_daily_hard_limit_exceeded returns True when spending exceeds limit."""
+        # Record enough usage to exceed the daily hard limit of 10.0
+        tracker.record_usage(
+            model="sonnet",
+            input_tokens=1000,
+            output_tokens=1000,
+            cost=15.0,
+            routed_by="test",
+        )
+        assert tracker.is_daily_hard_limit_exceeded(daily_hard=10.0) is True
+
+    def test_daily_hard_limit_exceeded_returns_true_when_at_limit(
+        self, tracker: BudgetTracker
+    ) -> None:
+        """Test that is_daily_hard_limit_exceeded returns True when spending equals limit."""
+        # Record usage exactly at the limit
+        tracker.record_usage(
+            model="sonnet",
+            input_tokens=1000,
+            output_tokens=1000,
+            cost=10.0,
+            routed_by="test",
+        )
+        assert tracker.is_daily_hard_limit_exceeded(daily_hard=10.0) is True
+
+    def test_daily_hard_limit_not_exceeded_returns_false(
+        self, tracker: BudgetTracker
+    ) -> None:
+        """Test that is_daily_hard_limit_exceeded returns False when under limit."""
+        # Record usage under the limit
+        tracker.record_usage(
+            model="haiku",
+            input_tokens=100,
+            output_tokens=100,
+            cost=0.50,
+            routed_by="test",
+        )
+        assert tracker.is_daily_hard_limit_exceeded(daily_hard=10.0) is False
+
+    def test_daily_hard_limit_not_exceeded_with_no_spending(
+        self, tracker: BudgetTracker
+    ) -> None:
+        """Test that is_daily_hard_limit_exceeded returns False with no spending."""
+        assert tracker.is_daily_hard_limit_exceeded(daily_hard=10.0) is False
