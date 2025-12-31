@@ -90,6 +90,12 @@ class ClaudiusREPL:
                     # Display response
                     self.console.print(render_response(response.model, response.text))
 
+                    # Show routing info (helps understand model selection)
+                    if response.routed_by and response.routed_by != "default":
+                        self.console.print(
+                            f"[dim]Routed via {response.routed_by}[/dim]"
+                        )
+
                     # Record usage in tracker
                     self.tracker.record_usage(
                         model=response.model,

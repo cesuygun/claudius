@@ -15,6 +15,7 @@ import httpx
 from rich.console import Console
 
 from claudius.pricing import calculate_cost
+from claudius.router import SmartRouter
 
 
 class ChatError(Exception):
@@ -32,10 +33,18 @@ class ChatResponse:
     input_tokens: int
     output_tokens: int
     cost: float  # Cost in configured currency (EUR)
+    routed_by: str = "default"  # How the model was selected
 
 
 class ChatClient:
     """Sends messages to Claude API via Claudius proxy."""
+
+    # Model ID mapping from short names to full model IDs
+    MODEL_IDS = {
+        "haiku": "claude-3-5-haiku-20241022",
+        "sonnet": "claude-sonnet-4-20250514",
+        "opus": "claude-opus-4-20250514",
+    }
 
     def __init__(
         self,
@@ -45,6 +54,7 @@ class ChatClient:
         self.proxy_url = proxy_url
         self.api_key = api_key
         self.conversation: list[dict[str, str]] = []
+        self.router = SmartRouter()
 
     def clear_history(self) -> None:
         """Clear conversation history."""
@@ -67,12 +77,27 @@ class ChatClient:
         Returns:
             ChatResponse with full response and token counts
         """
+        # Determine model to use via smart routing or override
+        if model_override:
+            target_model = model_override
+            routed_by = f"manual:{model_override}"
+        else:
+            # Use smart routing
+            decision = self.router.classify(message)
+            if decision.needs_classification and self.api_key:
+                decision = await self.router.classify_with_haiku(message, self.api_key)
+            target_model = decision.model
+            routed_by = decision.reason
+
+        # Map short name to full model ID
+        model_id = self.MODEL_IDS.get(target_model, self.MODEL_IDS["sonnet"])
+
         # Build request payload (use copy of existing conversation + new message)
         messages_for_request = list(self.conversation)
         messages_for_request.append({"role": "user", "content": message})
 
         payload = {
-            "model": "claude-sonnet-4-20250514",  # Default, proxy may route differently
+            "model": model_id,  # Use routed model
             "max_tokens": 4096,
             "messages": messages_for_request,
             "stream": True,
@@ -86,7 +111,7 @@ class ChatClient:
         if self.api_key:
             headers["x-api-key"] = self.api_key
 
-        # Add model override header if specified
+        # Add model override header if specified (for proxy awareness)
         if model_override:
             headers["x-model-override"] = model_override
 
@@ -177,11 +202,7 @@ class ChatClient:
         self.conversation.append({"role": "assistant", "content": accumulated_text})
 
         # Calculate cost
-        model_for_pricing = {
-            "haiku": "claude-3-5-haiku-20241022",
-            "sonnet": "claude-sonnet-4-20250514",
-            "opus": "claude-opus-4-20250514",
-        }.get(model_used, "claude-sonnet-4-20250514")
+        model_for_pricing = self.MODEL_IDS.get(model_used, self.MODEL_IDS["sonnet"])
         cost = calculate_cost(model_for_pricing, input_tokens, output_tokens)
 
         return ChatResponse(
@@ -190,4 +211,5 @@ class ChatClient:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost=cost,
+            routed_by=routed_by,
         )

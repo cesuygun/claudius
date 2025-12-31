@@ -934,3 +934,234 @@ class TestSSEChunkBuffering:
             assert response.input_tokens == 42
             assert response.output_tokens == 24
             assert response.text == "X"
+
+
+class TestSmartRouting:
+    """Tests for smart model routing integration."""
+
+    @pytest.fixture
+    def mock_streaming_response(self):
+        """Create a mock streaming SSE response."""
+
+        async def create_mock_response():
+            """Create async iterator for SSE chunks."""
+            chunks = [
+                b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_123","model":"claude-3-5-haiku-20241022","usage":{"input_tokens":100}}}\n\n',
+                b'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Response"}}\n\n',
+                b'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50}}\n\n',
+                b'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ]
+            for chunk in chunks:
+                yield chunk
+
+        return create_mock_response
+
+    async def test_chat_client_has_router(self) -> None:
+        """ChatClient should have a SmartRouter instance."""
+        from claudius.router import SmartRouter
+
+        client = ChatClient(api_key="sk-ant-test123")
+        assert hasattr(client, "router")
+        assert isinstance(client.router, SmartRouter)
+
+    async def test_chat_response_has_routed_by_field(self) -> None:
+        """ChatResponse should have routed_by field."""
+        response = ChatResponse(
+            model="sonnet",
+            text="Hello",
+            input_tokens=100,
+            output_tokens=50,
+            cost=0.005,
+        )
+        assert hasattr(response, "routed_by")
+        assert response.routed_by == "default"
+
+    async def test_chat_response_routed_by_can_be_set(self) -> None:
+        """ChatResponse routed_by field can be set."""
+        response = ChatResponse(
+            model="sonnet",
+            text="Hello",
+            input_tokens=100,
+            output_tokens=50,
+            cost=0.005,
+            routed_by="heuristic:short_message",
+        )
+        assert response.routed_by == "heuristic:short_message"
+
+    async def test_short_message_routes_to_haiku(
+        self, mock_streaming_response
+    ) -> None:
+        """Short messages should be routed to Haiku via heuristics."""
+        client = ChatClient(api_key="sk-ant-test123")
+
+        with patch("claudius.chat.httpx.AsyncClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.aclose = AsyncMock()
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "text/event-stream"}
+            mock_response.aiter_bytes = mock_streaming_response
+
+            mock_stream_cm = MagicMock()
+            mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_stream_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_client.stream.return_value = mock_stream_cm
+
+            response = await client.send_message("Hello")
+
+            # Verify model in payload is haiku
+            call_kwargs = mock_client.stream.call_args[1]
+            assert call_kwargs["json"]["model"] == "claude-3-5-haiku-20241022"
+
+            # Verify routed_by reflects heuristic routing
+            assert response.routed_by == "heuristic:short_message"
+
+    async def test_model_override_bypasses_routing(
+        self, mock_streaming_response
+    ) -> None:
+        """Model override should bypass smart routing."""
+        client = ChatClient(api_key="sk-ant-test123")
+
+        # Create opus response mock
+        async def opus_response():
+            chunks = [
+                b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_123","model":"claude-opus-4-20250514","usage":{"input_tokens":100}}}\n\n',
+                b'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Response"}}\n\n',
+                b'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50}}\n\n',
+                b'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ]
+            for chunk in chunks:
+                yield chunk
+
+        with patch("claudius.chat.httpx.AsyncClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.aclose = AsyncMock()
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "text/event-stream"}
+            mock_response.aiter_bytes = opus_response
+
+            mock_stream_cm = MagicMock()
+            mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_stream_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_client.stream.return_value = mock_stream_cm
+
+            # Short message that would normally route to haiku, but with opus override
+            response = await client.send_message("Hello", model_override="opus")
+
+            # Verify model in payload is opus (override worked)
+            call_kwargs = mock_client.stream.call_args[1]
+            assert call_kwargs["json"]["model"] == "claude-opus-4-20250514"
+
+            # Verify routed_by shows manual override
+            assert response.routed_by == "manual:opus"
+            assert response.routed_by.startswith("manual:")
+
+    async def test_code_block_routes_to_sonnet(self) -> None:
+        """Messages with code blocks should route to Sonnet."""
+        client = ChatClient(api_key="sk-ant-test123")
+
+        async def sonnet_response():
+            chunks = [
+                b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_123","model":"claude-sonnet-4-20250514","usage":{"input_tokens":100}}}\n\n',
+                b'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Response"}}\n\n',
+                b'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50}}\n\n',
+                b'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ]
+            for chunk in chunks:
+                yield chunk
+
+        with patch("claudius.chat.httpx.AsyncClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.aclose = AsyncMock()
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "text/event-stream"}
+            mock_response.aiter_bytes = sonnet_response
+
+            mock_stream_cm = MagicMock()
+            mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_stream_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_client.stream.return_value = mock_stream_cm
+
+            message = """Review this code:
+```python
+def hello():
+    print("hi")
+```"""
+            response = await client.send_message(message)
+
+            # Verify model in payload is sonnet
+            call_kwargs = mock_client.stream.call_args[1]
+            assert call_kwargs["json"]["model"] == "claude-sonnet-4-20250514"
+
+            # Verify routed_by reflects code block heuristic
+            assert response.routed_by == "heuristic:code_block"
+
+    async def test_opus_keyword_routes_to_opus(self) -> None:
+        """Messages with opus keywords should route to Opus."""
+        client = ChatClient(api_key="sk-ant-test123")
+
+        async def opus_response():
+            chunks = [
+                b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_123","model":"claude-opus-4-20250514","usage":{"input_tokens":100}}}\n\n',
+                b'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Response"}}\n\n',
+                b'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50}}\n\n',
+                b'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ]
+            for chunk in chunks:
+                yield chunk
+
+        with patch("claudius.chat.httpx.AsyncClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+            mock_client.aclose = AsyncMock()
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "text/event-stream"}
+            mock_response.aiter_bytes = opus_response
+
+            mock_stream_cm = MagicMock()
+            mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_stream_cm.__aexit__ = AsyncMock(return_value=None)
+            mock_client.stream.return_value = mock_stream_cm
+
+            # 21 words - above short message threshold, with opus keyword
+            message = "I need you to architect a new system for our application that handles user authentication and payment processing with high availability and scalability requirements."
+            response = await client.send_message(message)
+
+            # Verify model in payload is opus
+            call_kwargs = mock_client.stream.call_args[1]
+            assert call_kwargs["json"]["model"] == "claude-opus-4-20250514"
+
+            # Verify routed_by reflects opus keyword heuristic
+            assert "heuristic:opus_keyword" in response.routed_by
+            assert "architect" in response.routed_by
+
+
+class TestChatClientModelIds:
+    """Tests for ChatClient.MODEL_IDS constant."""
+
+    def test_model_ids_constant_exists(self) -> None:
+        """ChatClient should have MODEL_IDS constant."""
+        assert hasattr(ChatClient, "MODEL_IDS")
+        assert isinstance(ChatClient.MODEL_IDS, dict)
+
+    def test_model_ids_has_all_models(self) -> None:
+        """MODEL_IDS should contain haiku, sonnet, and opus."""
+        assert "haiku" in ChatClient.MODEL_IDS
+        assert "sonnet" in ChatClient.MODEL_IDS
+        assert "opus" in ChatClient.MODEL_IDS
+
+    def test_model_ids_correct_values(self) -> None:
+        """MODEL_IDS should map to correct model IDs."""
+        assert ChatClient.MODEL_IDS["haiku"] == "claude-3-5-haiku-20241022"
+        assert ChatClient.MODEL_IDS["sonnet"] == "claude-sonnet-4-20250514"
+        assert ChatClient.MODEL_IDS["opus"] == "claude-opus-4-20250514"
