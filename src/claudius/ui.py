@@ -13,7 +13,6 @@ Renders budget information and responses using the Rich library:
 """
 
 from rich.console import RenderableType
-from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
@@ -60,7 +59,8 @@ def render_banner() -> RenderableType:
     """Render the ASCII art banner for startup.
 
     Returns a Rich renderable containing the CLAUDIUS ASCII art
-    and tagline with version information.
+    and tagline with version information. Uses raw Text without
+    Panel wrapper for better terminal compatibility.
     """
     banner_text = Text()
     banner_text.append(BANNER_ASCII, style="bold cyan")
@@ -69,11 +69,7 @@ def render_banner() -> RenderableType:
     banner_text.append(f"v{VERSION}", style="cyan")
     banner_text.append("\n")
 
-    return Panel(
-        banner_text,
-        border_style="cyan",
-        padding=(0, 2),
-    )
+    return banner_text
 
 
 def render_budget_bars(tracker: BudgetTracker, config: Config) -> RenderableType:
