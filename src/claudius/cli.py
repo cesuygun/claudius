@@ -317,11 +317,11 @@ def _enable_claude_code() -> None:
             check=True,
             capture_output=True,
         )
-        console.print(f"[green]✅ Claude Code now uses Claudius![/green]")
+        console.print("[green]✅ Claude Code now uses Claudius![/green]")
         console.print(f"[dim]Proxy URL: {proxy_url}[/dim]")
         console.print("\n[yellow]Remember to run 'claudius proxy' before using Claude Code![/yellow]")
     except subprocess.CalledProcessError as e:
-        console.print(f"[red]Error: Failed to configure Claude Code[/red]")
+        console.print("[red]Error: Failed to configure Claude Code[/red]")
         console.print(f"[dim]{e.stderr.decode() if e.stderr else ''}[/dim]")
     except FileNotFoundError:
         console.print("[red]Error: 'claude' command not found. Is Claude Code installed?[/red]")
@@ -340,7 +340,7 @@ def _disable_claude_code() -> None:
         console.print("[green]✅ Claude Code now uses Anthropic directly[/green]")
         console.print("[dim]Claudius budget tracking disabled[/dim]")
     except subprocess.CalledProcessError as e:
-        console.print(f"[red]Error: Failed to configure Claude Code[/red]")
+        console.print("[red]Error: Failed to configure Claude Code[/red]")
         console.print(f"[dim]{e.stderr.decode() if e.stderr else ''}[/dim]")
     except FileNotFoundError:
         console.print("[red]Error: 'claude' command not found. Is Claude Code installed?[/red]")
