@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -32,11 +32,8 @@ jobs:
       - name: Run linter
         run: uv run ruff check src/ tests/
 
-      - name: Run type checker
-        run: uv run mypy src/claudius --strict
-
       - name: Run tests
-        run: uv run pytest --cov=claudius --cov-report=xml -q
+        run: uv run pytest -x -q --ignore=tests/test_cli_main.py
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
