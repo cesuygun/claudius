@@ -1,5 +1,5 @@
 # ABOUTME: Slash command handler for the Claudius REPL
-# ABOUTME: Handles commands like /status, /config, /logs, /opus, /sonnet, /haiku, /auto, /help, /quit
+# ABOUTME: Handles commands like /status, /config, /logs, /models, /opus, /sonnet, /haiku, /auto, /help, /quit
 
 """
 Claudius Command Handler.
@@ -8,6 +8,7 @@ Processes slash commands in the REPL:
 - /status: Show budget status
 - /config: Open configuration file in editor
 - /logs: View recent usage history
+- /models: Show available models and pricing
 - /opus, /sonnet, /haiku: Force model for next query
 - /auto: Return to automatic routing
 - /help: Show all commands
@@ -40,6 +41,7 @@ COMMANDS_HELP = """Available Commands:
   /status  - Show budget status
   /config  - Open configuration file in editor
   /logs    - View recent usage history
+  /models  - Show available models and pricing
   /opus    - Force Opus for next query
   /sonnet  - Force Sonnet for next query
   /haiku   - Force Haiku for next query
@@ -85,6 +87,8 @@ class CommandHandler:
             return self._handle_auto()
         elif command == "/help":
             return self._handle_help()
+        elif command == "/models":
+            return self._handle_models()
         else:
             return self._handle_unknown(input_text)
 
@@ -154,6 +158,30 @@ class CommandHandler:
     def _handle_help(self) -> CommandResult:
         """Handle /help command."""
         return CommandResult(output=COMMANDS_HELP)
+
+    def _handle_models(self) -> CommandResult:
+        """Handle /models command - show available models and pricing."""
+        from claudius.pricing import MODEL_PRICING
+
+        lines = ["📊 Available Models:\n"]
+        lines.append("| Model  | Input (per 1M) | Output (per 1M) |")
+        lines.append("|--------|----------------|-----------------|")
+
+        model_order = [
+            ("haiku", "claude-3-5-haiku-20241022"),
+            ("sonnet", "claude-sonnet-4-20250514"),
+            ("opus", "claude-opus-4-20250514"),
+        ]
+
+        for short_name, model_id in model_order:
+            prices = MODEL_PRICING.get(model_id, {"input_per_million": 0, "output_per_million": 0})
+            input_per_m = prices["input_per_million"]
+            output_per_m = prices["output_per_million"]
+            lines.append(f"| {short_name:6} | €{input_per_m:<13.2f} | €{output_per_m:<15.2f} |")
+
+        lines.append("\nUse /haiku, /sonnet, /opus to force a model.")
+
+        return CommandResult(output="\n".join(lines))
 
     def _handle_unknown(self, input_text: str) -> CommandResult:
         """Handle unknown commands."""

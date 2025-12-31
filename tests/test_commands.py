@@ -1,5 +1,5 @@
 # ABOUTME: Tests for slash command handler in the Claudius REPL
-# ABOUTME: Covers all slash commands including /status, /config, /logs, model overrides, /help, and /quit
+# ABOUTME: Covers all slash commands including /status, /config, /logs, /models, model overrides, /help, and /quit
 
 """Tests for Claudius command handler."""
 
@@ -264,6 +264,61 @@ class TestLogsCommand:
         assert "haiku" in result.output.lower() or "0.001" in result.output
 
 
+class TestModelsCommand:
+    """Tests for /models command."""
+
+    @pytest.fixture
+    def handler(self) -> CommandHandler:
+        """Create a CommandHandler instance."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            tracker = BudgetTracker(db_path=Path(f.name))
+        config = Config()
+        console = Console(force_terminal=True, width=100)
+        return CommandHandler(tracker=tracker, config=config, console=console)
+
+    def test_models_command_returns_result(self, handler: CommandHandler) -> None:
+        """Test /models returns a CommandResult with output."""
+        result = handler.handle("/models")
+        assert result is not None
+        assert result.output is not None
+
+    def test_models_command_shows_all_models(self, handler: CommandHandler) -> None:
+        """Test /models shows all available models."""
+        result = handler.handle("/models")
+        assert result is not None
+        assert result.output is not None
+        assert "haiku" in result.output.lower()
+        assert "sonnet" in result.output.lower()
+        assert "opus" in result.output.lower()
+
+    def test_models_command_shows_pricing(self, handler: CommandHandler) -> None:
+        """Test /models shows pricing information."""
+        result = handler.handle("/models")
+        assert result is not None
+        assert result.output is not None
+        assert "€" in result.output
+        assert "per 1M" in result.output
+
+    def test_models_command_shows_table_format(self, handler: CommandHandler) -> None:
+        """Test /models shows output in table format."""
+        result = handler.handle("/models")
+        assert result is not None
+        assert result.output is not None
+        # Should have table separators
+        assert "|" in result.output
+        assert "Input" in result.output
+        assert "Output" in result.output
+
+    def test_models_command_shows_usage_hint(self, handler: CommandHandler) -> None:
+        """Test /models shows hint about how to force models."""
+        result = handler.handle("/models")
+        assert result is not None
+        assert result.output is not None
+        assert "/haiku" in result.output
+        assert "/sonnet" in result.output
+        assert "/opus" in result.output
+
+
 class TestModelOverrideCommands:
     """Tests for /opus, /sonnet, /haiku, and /auto commands."""
 
@@ -364,7 +419,7 @@ class TestHelpCommand:
         assert result.output is not None
 
         # Should list all commands
-        commands = ["/status", "/config", "/logs", "/opus", "/sonnet", "/haiku", "/auto", "/help", "/quit"]
+        commands = ["/status", "/config", "/logs", "/models", "/opus", "/sonnet", "/haiku", "/auto", "/help", "/quit"]
         for cmd in commands:
             assert cmd in result.output, f"Expected {cmd} in help output"
 
