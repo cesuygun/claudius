@@ -15,6 +15,7 @@ from claudius.ui import (
     get_color_for_percent,
     get_currency_symbol,
     render_banner,
+    render_budget_alert,
     render_budget_bars,
     render_cost_estimate,
     render_cost_line,
@@ -633,3 +634,220 @@ class TestBudgetBarsWithSpending:
 
             # Should show 85% in output
             assert "85%" in output
+
+
+class TestRenderBudgetAlert:
+    """Tests for render_budget_alert function."""
+
+    def test_daily_alert_shows_warning_emoji(self) -> None:
+        """Test that daily budget alert shows warning emoji."""
+        result = render_budget_alert(
+            alert_type="daily",
+            percent=82.0,
+            spent=4.10,
+            budget=5.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        # Should contain warning emoji or warning-like content
+        assert "\u26a0" in output or "Daily budget" in output
+
+    def test_daily_alert_shows_daily_budget_label(self) -> None:
+        """Test that daily budget alert shows 'Daily budget' label."""
+        result = render_budget_alert(
+            alert_type="daily",
+            percent=82.0,
+            spent=4.10,
+            budget=5.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "Daily budget" in output
+
+    def test_daily_alert_shows_percentage(self) -> None:
+        """Test that daily budget alert shows the percentage."""
+        result = render_budget_alert(
+            alert_type="daily",
+            percent=82.0,
+            spent=4.10,
+            budget=5.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "82%" in output
+
+    def test_daily_alert_shows_spent_and_budget(self) -> None:
+        """Test that daily budget alert shows spent and budget amounts."""
+        result = render_budget_alert(
+            alert_type="daily",
+            percent=82.0,
+            spent=4.10,
+            budget=5.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "4.10" in output
+        assert "5.00" in output
+
+    def test_monthly_alert_shows_alert_emoji(self) -> None:
+        """Test that monthly budget alert shows alert emoji."""
+        result = render_budget_alert(
+            alert_type="monthly",
+            percent=85.0,
+            spent=76.50,
+            budget=90.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        # Should contain alert emoji or monthly budget content
+        assert "\U0001f6a8" in output or "Monthly budget" in output
+
+    def test_monthly_alert_shows_monthly_budget_label(self) -> None:
+        """Test that monthly budget alert shows 'Monthly budget' label."""
+        result = render_budget_alert(
+            alert_type="monthly",
+            percent=85.0,
+            spent=76.50,
+            budget=90.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "Monthly budget" in output
+
+    def test_monthly_alert_shows_percentage(self) -> None:
+        """Test that monthly budget alert shows the percentage."""
+        result = render_budget_alert(
+            alert_type="monthly",
+            percent=85.0,
+            spent=76.50,
+            budget=90.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "85%" in output
+
+    def test_monthly_alert_shows_spent_and_budget(self) -> None:
+        """Test that monthly budget alert shows spent and budget amounts."""
+        result = render_budget_alert(
+            alert_type="monthly",
+            percent=85.0,
+            spent=76.50,
+            budget=90.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "76.50" in output
+        assert "90.00" in output
+
+    def test_alert_uses_currency_symbol(self) -> None:
+        """Test that budget alert uses correct currency symbol."""
+        result = render_budget_alert(
+            alert_type="daily",
+            percent=80.0,
+            spent=4.00,
+            budget=5.00,
+            currency="USD",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "$" in output
+
+    def test_alert_uses_eur_currency_symbol(self) -> None:
+        """Test that budget alert uses EUR currency symbol."""
+        result = render_budget_alert(
+            alert_type="daily",
+            percent=80.0,
+            spent=4.00,
+            budget=5.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        # EUR should show Euro symbol
+        assert "EUR" in output or "\u20ac" in output
+
+    def test_alert_at_exactly_80_percent(self) -> None:
+        """Test that budget alert works at exactly 80% threshold."""
+        result = render_budget_alert(
+            alert_type="daily",
+            percent=80.0,
+            spent=4.00,
+            budget=5.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "80%" in output
+
+    def test_alert_at_100_percent(self) -> None:
+        """Test that budget alert works at 100% threshold."""
+        result = render_budget_alert(
+            alert_type="monthly",
+            percent=100.0,
+            spent=90.00,
+            budget=90.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "100%" in output
+
+    def test_alert_over_100_percent(self) -> None:
+        """Test that budget alert works when over 100%."""
+        result = render_budget_alert(
+            alert_type="monthly",
+            percent=110.0,
+            spent=99.00,
+            budget=90.00,
+            currency="EUR",
+        )
+        console = Console(force_terminal=True, width=100)
+        with console.capture() as capture:
+            console.print(result)
+        output = capture.get()
+
+        assert "110%" in output

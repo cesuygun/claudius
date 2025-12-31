@@ -25,6 +25,7 @@ from claudius.config import Config
 from claudius.estimation import estimate_cost
 from claudius.ui import (
     render_banner,
+    render_budget_alert,
     render_budget_bars,
     render_cost_estimate,
     render_cost_line,
@@ -152,6 +153,34 @@ class ClaudiusREPL:
 
                     # Update cost display
                     self.console.print(render_cost_line(self.tracker, self.config))
+
+                    # Check for budget alerts (80% threshold)
+                    status = self.tracker.get_status(
+                        self.config.budget.monthly,
+                        self.config.budget.daily_soft,
+                    )
+
+                    if status.daily_percent >= 80:
+                        self.console.print(
+                            render_budget_alert(
+                                "daily",
+                                status.daily_percent,
+                                status.daily_spent,
+                                status.daily_budget,
+                                self.config.budget.currency,
+                            )
+                        )
+
+                    if status.monthly_percent >= 80:
+                        self.console.print(
+                            render_budget_alert(
+                                "monthly",
+                                status.monthly_percent,
+                                status.monthly_spent,
+                                status.monthly_budget,
+                                self.config.budget.currency,
+                            )
+                        )
 
                 except ChatError as e:
                     self.console.print(f"[red]Error: {e}[/red]")

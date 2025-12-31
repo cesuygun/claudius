@@ -565,3 +565,201 @@ class TestClaudiusREPLCostEstimation:
         repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
 
         assert repl.api_key == "sk-ant-test123"
+
+
+class TestClaudiusREPLBudgetAlerts:
+    """Tests for REPL budget alert display."""
+
+    @pytest.fixture
+    def temp_db(self) -> Path:
+        """Create a temporary database file."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            return Path(f.name)
+
+    @pytest.fixture
+    def mock_chat_response(self) -> ChatResponse:
+        """Create a mock chat response."""
+        return ChatResponse(
+            model="sonnet",
+            text="Hello! How can I help you?",
+            input_tokens=100,
+            output_tokens=50,
+            cost=0.005,
+        )
+
+    @pytest.fixture
+    def mock_estimation(self) -> EstimationResult:
+        """Create a mock estimation result."""
+        return EstimationResult(
+            input_tokens=100,
+            output_tokens_min=50,
+            output_tokens_max=200,
+            cost_min=0.01,
+            cost_max=0.05,
+            model="claude-3-5-haiku-20241022",
+            input_cost=0.005,
+            output_cost_min=0.005,
+            output_cost_max=0.045,
+        )
+
+    async def test_daily_alert_shown_at_80_percent(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that daily budget alert is shown when daily spending reaches 80%."""
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        # Set daily budget to 10 and pre-spend 7.5 (75%), then chat adds 0.005 to reach ~75%
+        config.budget.daily_soft = 10.0
+        config.budget.monthly = 1000.0
+
+        # Pre-record enough spending to push us over 80% after the chat
+        # We need 8.0+ to be at 80%, so pre-spend 7.996 and chat adds 0.005 = 8.001
+        tracker.record_usage(
+            model="test-model",
+            input_tokens=100,
+            output_tokens=100,
+            cost=7.996,
+        )
+
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        printed_outputs: list[str] = []
+
+        def capture_print(renderable: object) -> None:
+            console = Console(force_terminal=True, width=100)
+            with console.capture() as capture:
+                console.print(renderable)
+            printed_outputs.append(capture.get())
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            with patch.object(repl.console, "print", side_effect=capture_print):
+                await repl.run()
+
+        # Check that daily alert was printed
+        all_output = "".join(printed_outputs)
+        assert "Daily budget" in all_output
+
+    async def test_monthly_alert_shown_at_80_percent(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that monthly budget alert is shown when monthly spending reaches 80%."""
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        # Set monthly budget to 100 and pre-spend enough to reach 80%
+        config.budget.monthly = 100.0
+        config.budget.daily_soft = 1000.0  # High daily to avoid daily alert
+
+        # Pre-record spending to push us over 80%
+        tracker.record_usage(
+            model="test-model",
+            input_tokens=100,
+            output_tokens=100,
+            cost=79.996,  # 79.996 + 0.005 = 80.001
+        )
+
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        printed_outputs: list[str] = []
+
+        def capture_print(renderable: object) -> None:
+            console = Console(force_terminal=True, width=100)
+            with console.capture() as capture:
+                console.print(renderable)
+            printed_outputs.append(capture.get())
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            with patch.object(repl.console, "print", side_effect=capture_print):
+                await repl.run()
+
+        # Check that monthly alert was printed
+        all_output = "".join(printed_outputs)
+        assert "Monthly budget" in all_output
+
+    async def test_no_alert_under_80_percent(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that no budget alert is shown when spending is under 80%."""
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        # Set budgets high enough that we stay under 80%
+        config.budget.monthly = 1000.0
+        config.budget.daily_soft = 100.0
+
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        printed_outputs: list[str] = []
+
+        def capture_print(renderable: object) -> None:
+            console = Console(force_terminal=True, width=100)
+            with console.capture() as capture:
+                console.print(renderable)
+            printed_outputs.append(capture.get())
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            with patch.object(repl.console, "print", side_effect=capture_print):
+                await repl.run()
+
+        # Check that neither budget alert was printed (using keywords from alert rendering)
+        all_output = "".join(printed_outputs)
+        # The budget bars show "Monthly" and "Today", but alerts use "Daily budget" and "Monthly budget"
+        assert "Daily budget at" not in all_output
+        assert "Monthly budget at" not in all_output
+
+    async def test_both_alerts_shown_when_both_exceed_threshold(
+        self, temp_db: Path, mock_chat_response: ChatResponse, mock_estimation: EstimationResult
+    ) -> None:
+        """Test that both daily and monthly alerts are shown when both exceed 80%."""
+        tracker = BudgetTracker(db_path=temp_db)
+        config = Config()
+        # Set both budgets low enough that we exceed 80%
+        config.budget.monthly = 100.0
+        config.budget.daily_soft = 10.0
+
+        # Pre-record spending to push both over 80%
+        tracker.record_usage(
+            model="test-model",
+            input_tokens=100,
+            output_tokens=100,
+            cost=79.996,  # 79.996 + 0.005 = 80.001% of monthly
+        )
+        # Also record more to push daily over
+        tracker.record_usage(
+            model="test-model",
+            input_tokens=100,
+            output_tokens=100,
+            cost=7.999,  # Additional to push daily: 79.996 + 7.999 + 0.005 = 87.996 daily
+        )
+
+        # Now daily spent is 79.996 + 7.999 = 87.995, plus 0.005 = 88.0 (880% of daily)
+        # Monthly spent is also 88.0 (88% of monthly)
+
+        repl = ClaudiusREPL(tracker=tracker, config=config, api_key="sk-ant-test123")
+        repl.session.prompt_async = AsyncMock(side_effect=["Hello", "/quit"])
+        repl.chat_client.send_message = AsyncMock(return_value=mock_chat_response)
+
+        printed_outputs: list[str] = []
+
+        def capture_print(renderable: object) -> None:
+            console = Console(force_terminal=True, width=100)
+            with console.capture() as capture:
+                console.print(renderable)
+            printed_outputs.append(capture.get())
+
+        with patch("claudius.repl.estimate_cost", new_callable=AsyncMock) as mock_estimate:
+            mock_estimate.return_value = mock_estimation
+            with patch.object(repl.console, "print", side_effect=capture_print):
+                await repl.run()
+
+        # Check that both alerts were printed
+        all_output = "".join(printed_outputs)
+        assert "Daily budget" in all_output
+        assert "Monthly budget" in all_output

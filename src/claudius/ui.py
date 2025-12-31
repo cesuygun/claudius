@@ -253,6 +253,48 @@ def render_cost_estimate(
     return text
 
 
+def render_budget_alert(
+    alert_type: str,
+    percent: float,
+    spent: float,
+    budget: float,
+    currency: str,
+) -> RenderableType:
+    """Render budget warning alert.
+
+    Shows a warning when budget reaches 80% threshold:
+    - Daily alerts use yellow warning emoji
+    - Monthly alerts use red alert emoji
+
+    Args:
+        alert_type: Either "daily" or "monthly"
+        percent: Current percentage of budget used
+        spent: Amount spent so far
+        budget: Total budget amount
+        currency: Currency code for symbol lookup
+
+    Returns:
+        Rich Text renderable with formatted alert message
+    """
+    symbol = get_currency_symbol(currency)
+
+    if alert_type == "daily":
+        emoji = "\u26a0\ufe0f"  # Warning sign
+        label = "Daily budget"
+        style = "yellow"
+    else:
+        emoji = "\U0001f6a8"  # Police car light / alert
+        label = "Monthly budget"
+        style = "red"
+
+    text = Text()
+    text.append(f"{emoji} ", style=f"bold {style}")
+    text.append(f"{label} at {percent:.0f}%!", style=f"bold {style}")
+    text.append(f" ({symbol}{spent:.2f}/{symbol}{budget:.2f})", style="dim")
+
+    return text
+
+
 def render_cost_line(tracker: BudgetTracker, config: Config) -> RenderableType:
     """Render compact cost update line after each response.
 
