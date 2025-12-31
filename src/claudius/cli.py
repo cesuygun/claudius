@@ -274,6 +274,78 @@ def _start_interactive_mode() -> None:
     asyncio.run(repl.run())
 
 
+def _run_proxy_only() -> None:
+    """Run only the proxy server without REPL (for Claude Code integration)."""
+    config = Config.load()
+    api_key = resolve_api_key(config)
+
+    if not api_key:
+        console.print(
+            "[red]Error: No API key found.[/red]\n"
+            "Set ANTHROPIC_API_KEY environment variable or add to ~/.claudius/config.toml"
+        )
+        return
+
+    if not check_port_available(config.proxy.host, config.proxy.port):
+        console.print(
+            f"[red]Error: Port {config.proxy.port} is already in use.[/red]"
+        )
+        return
+
+    tracker = BudgetTracker()
+    set_rate_limit_config(config.rate_limit)
+    set_api_config(config.api)
+    set_budget_tracker(tracker)
+
+    console.print(f"[green]🛡️ Claudius proxy running on http://{config.proxy.host}:{config.proxy.port}[/green]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+
+    app = create_app()
+    uvicorn.run(app, host=config.proxy.host, port=config.proxy.port, log_level="warning")
+
+
+def _enable_claude_code() -> None:
+    """Configure Claude Code to use Claudius proxy."""
+    import subprocess
+
+    config = Config.load()
+    proxy_url = f"http://{config.proxy.host}:{config.proxy.port}"
+
+    try:
+        subprocess.run(
+            ["claude", "config", "set", "--global", "apiBaseUrl", proxy_url],
+            check=True,
+            capture_output=True,
+        )
+        console.print(f"[green]✅ Claude Code now uses Claudius![/green]")
+        console.print(f"[dim]Proxy URL: {proxy_url}[/dim]")
+        console.print("\n[yellow]Remember to run 'claudius proxy' before using Claude Code![/yellow]")
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Error: Failed to configure Claude Code[/red]")
+        console.print(f"[dim]{e.stderr.decode() if e.stderr else ''}[/dim]")
+    except FileNotFoundError:
+        console.print("[red]Error: 'claude' command not found. Is Claude Code installed?[/red]")
+
+
+def _disable_claude_code() -> None:
+    """Configure Claude Code to use Anthropic directly (bypass Claudius)."""
+    import subprocess
+
+    try:
+        subprocess.run(
+            ["claude", "config", "set", "--global", "apiBaseUrl", "https://api.anthropic.com"],
+            check=True,
+            capture_output=True,
+        )
+        console.print("[green]✅ Claude Code now uses Anthropic directly[/green]")
+        console.print("[dim]Claudius budget tracking disabled[/dim]")
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Error: Failed to configure Claude Code[/red]")
+        console.print(f"[dim]{e.stderr.decode() if e.stderr else ''}[/dim]")
+    except FileNotFoundError:
+        console.print("[red]Error: 'claude' command not found. Is Claude Code installed?[/red]")
+
+
 def main(argv: list[str] | None = None) -> None:
     """Main entry point for Claudius CLI.
 
@@ -292,10 +364,34 @@ def main(argv: list[str] | None = None) -> None:
         help="Output budget status line for Claude Code integration",
     )
 
+    # proxy subcommand
+    subparsers.add_parser(
+        "proxy",
+        help="Run proxy server only (for Claude Code)",
+    )
+
+    # enable subcommand
+    subparsers.add_parser(
+        "enable",
+        help="Configure Claude Code to use Claudius",
+    )
+
+    # disable subcommand
+    subparsers.add_parser(
+        "disable",
+        help="Configure Claude Code to bypass Claudius",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "status-line":
         status_line_command()
+    elif args.command == "proxy":
+        _run_proxy_only()
+    elif args.command == "enable":
+        _enable_claude_code()
+    elif args.command == "disable":
+        _disable_claude_code()
     else:
         # Default: start REPL + proxy server
         _start_interactive_mode()

@@ -1,131 +1,96 @@
 <p align="center">
   <h1 align="center">⚔️ Claudius 🛡️</h1>
   <p align="center"><strong>Your AI Budget Guardian</strong></p>
-  <p align="center">Smart Claude API cost management with auto-routing</p>
+  <p align="center">Budget tracking & smart routing for Claude Code</p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/cesuygun/claudius/stargazers"><img src="https://img.shields.io/github/stars/cesuygun/claudius?style=social" alt="Stars"></a>
   <a href="https://github.com/cesuygun/claudius/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
-  <a href="https://pypi.org/project/claudius/"><img src="https://img.shields.io/pypi/v/claudius.svg" alt="PyPI"></a>
   <a href="https://python.org"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python"></a>
 </p>
 
 ---
 
-## The Problem
+## What is Claudius?
 
-| Option | Issue |
-|--------|-------|
-| **Claude Max ($100/month)** | Pay even when you don't use it |
-| **API pay-as-you-go** | No budget controls, easy to overspend |
-| **LiteLLM** | Overkill - enterprise tool for 100+ providers |
+Claudius is a **budget guardian** for Claude Code. It sits between you and the Anthropic API, tracking your spending and automatically routing queries to the cheapest model that can handle them.
 
-**Claudius fills the gap**: Claude-focused, simple, smart budget management.
+**Without Claudius:** Claude Code uses expensive models for everything → surprise bills
 
-## Features
+**With Claudius:** Smart routing saves money, budget limits prevent overspending
 
-- 🧠 **Smart Routing** - Haiku handles simple queries, escalates to Sonnet/Opus when needed
-- 💰 **Budget Limits** - Daily and monthly caps with warnings
-- 🔄 **Rollover** - Unused budget carries to next month
-- 📊 **Live Tracking** - See your spend in real-time
-- 🔌 **Claude Code Compatible** - Works as a proxy for full integration
-
-## Quick Start
+## Quick Start (3 steps)
 
 ```bash
-# Install
+# 1. Install
 pip install claudius
-# or: pipx install claudius
 
-# Configure your API key (choose one method):
-
-# Option 1: Config file (recommended - persists across sessions)
-mkdir -p ~/.claudius
-echo '[api]
-key = "sk-ant-your-key-here"' >> ~/.claudius/config.toml
-
-# Option 2: Environment variable
+# 2. Set your API key
 export ANTHROPIC_API_KEY=sk-ant-your-key-here
 
-# Start the proxy
-claudius
+# 3. Enable Claudius for Claude Code
+claudius enable
 ```
 
-> ⚠️ **Security**: Never commit your API key to git. The config file lives in your home directory (`~/.claudius/`), safely outside any repo.
+That's it! Now use Claude Code normally - Claudius handles the rest.
 
-## What It Looks Like
+## Usage
 
-```
-  ⚔️                        🛡️
-     ╔═╗╦  ╔═╗╦ ╦╔╦╗╦╦ ╦╔═╗
-     ║  ║  ╠═╣║ ║ ║║║║ ║╚═╗
-     ╚═╝╩═╝╩ ╩╚═╝═╩╝╩╚═╝╚═╝
-
-  Your AI Budget Guardian • v1.0.0
-
-  ─────────────────────────────────────────────
-
-  💰 Monthly  [████████████████░░░░]  €73.20/€90 (81%)
-  📅 Today    [█████████░░░░░░░░░░░]  €2.30/€5  (46%)
-  🔄 Rollover: €12.00  |  ⏰ Resets: 14 days
-
-  ─────────────────────────────────────────────
-
-  You: What's the best way to handle auth?
-
-  🤖 [Haiku]: For authentication, I recommend...
-
-  💰 €72.90/€90 [████████████████░░░░] 81%
-
-  You:
-```
-
-## Smart Routing
-
-Claudius uses Haiku as a gatekeeper. Simple queries stay with Haiku (€0.001), complex ones escalate:
-
-```
-Your Query
-    │
-    ▼
-┌────────┐
-│ Haiku  │──── "Can I handle this?"
-└────────┘
-    │
-    ├── YES → Haiku answers (€0.001)
-    │
-    └── NO → "How complex?"
-            │
-            ├── Medium → Sonnet (€0.03)
-            └── Hard → Opus (€0.30)
-```
-
-## Claude Code Integration
-
-Use Claudius as a proxy for Claude Code - get budget tracking with all your skills:
+### For Claude Code (recommended)
 
 ```bash
-# Terminal 1: Start Claudius
-claudius
+# One-time setup
+claudius enable    # Configure Claude Code to use Claudius
 
-# Terminal 2: Point Claude Code to Claudius
-export ANTHROPIC_BASE_URL=http://localhost:4000
-claude
+# Every time you code
+claudius proxy     # Start this first, keep it running
+claude             # Use Claude Code normally in another terminal
+```
+
+### Standalone Chat
+
+```bash
+claudius           # Interactive chat with budget tracking
+```
+
+### Switching Modes
+
+```bash
+claudius enable    # Use Claudius (budget tracking ON)
+claudius disable   # Bypass Claudius (direct to Anthropic)
 ```
 
 ## Commands
 
+| Command | What it does |
+|---------|--------------|
+| `claudius` | Start chat mode with budget display |
+| `claudius proxy` | Run proxy only (for Claude Code) |
+| `claudius enable` | Configure Claude Code to use Claudius |
+| `claudius disable` | Configure Claude Code to bypass Claudius |
+
+### Chat Commands
+
+When in chat mode, use these slash commands:
+
 | Command | Description |
 |---------|-------------|
 | `/status` | Show budget status |
-| `/logs` | View usage history |
+| `/models` | Show available models and pricing |
 | `/opus` | Force Opus for next query |
 | `/sonnet` | Force Sonnet for next query |
 | `/haiku` | Force Haiku for next query |
-| `/auto` | Return to auto routing |
-| `/config` | Open configuration |
 | `/help` | Show all commands |
+
+## Smart Routing
+
+Claudius automatically picks the cheapest model that can handle your query:
+
+| Query Type | Model | Cost |
+|------------|-------|------|
+| Simple questions | Haiku | ~€0.001 |
+| Code review, medium tasks | Sonnet | ~€0.03 |
+| Architecture, complex analysis | Opus | ~€0.30 |
 
 ## Configuration
 
@@ -133,43 +98,32 @@ Config file: `~/.claudius/config.toml`
 
 ```toml
 [api]
-key = ""  # Your Anthropic API key (or use ANTHROPIC_API_KEY env var)
+key = ""  # Or use ANTHROPIC_API_KEY env var
 
 [budget]
-monthly = 90
-daily_soft = 5
-daily_hard = 10
-rollover = true
-currency = "EUR"
-
-[routing]
-default = "haiku"
-auto_classify = true
+monthly = 90        # Monthly limit in EUR
+daily_soft = 5      # Warning threshold
+daily_hard = 10     # Force Haiku above this
 
 [proxy]
 host = "127.0.0.1"
 port = 4000
-
-[rate_limit]
-max_retries = 3
-initial_delay = 5
-backoff_multiplier = 3
 ```
 
-**API Key Resolution Order:**
-1. Request headers (`x-api-key` or `Authorization: Bearer`)
-2. Config file (`api.key`)
-3. Environment variable (`ANTHROPIC_API_KEY`)
+## How It Works
 
-## Support Claudius
-
-If Claudius saves you money, consider supporting development:
-
-- ☕ [Buy me a coffee on Ko-fi](https://ko-fi.com/cesuygun)
-
-## Star History
-
-If you find Claudius useful, please ⭐ star this repo - it helps others discover it!
+```
+┌─────────────┐     ┌──────────┐     ┌───────────┐
+│ Claude Code │────▶│ Claudius │────▶│ Anthropic │
+└─────────────┘     └──────────┘     └───────────┘
+                         │
+                    ┌────┴────┐
+                    │ Budget  │
+                    │Tracking │
+                    │ + Smart │
+                    │ Routing │
+                    └─────────┘
+```
 
 ## License
 
@@ -178,5 +132,5 @@ MIT - see [LICENSE](LICENSE)
 ---
 
 <p align="center">
-  <sub>Built with ❤️ by <a href="https://github.com/cesuygun">@cesuygun</a> · A project by <strong>IdeaVista</strong></sub>
+  <sub>Built with ❤️ by the Claudius Contributors</sub>
 </p>
